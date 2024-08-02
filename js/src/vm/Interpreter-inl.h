@@ -453,10 +453,8 @@ static MOZ_ALWAYS_INLINE bool GetObjectElementOperation(
       }
     }
 
-    // TODO(SAM) if the key is a tainted number, we need to unbox
-    // otherwise this strange behavior occurs:
-    // var a = [0];
-    // a[Number.tainted(0)] === true
+    // TODO(0drai) if the key is a tainted number, we should(?) to unbox
+    // it and use the unboxed value as key, which is most likely the desired behavior.
     RootedId id(cx);
     if (isTaintedNumber(key)) {
       taint = getNumberTaint(key);
@@ -480,6 +478,8 @@ static MOZ_ALWAYS_INLINE bool GetObjectElementOperation(
     }
   } while (false);
 
+  // TaintFox: If the object is a ainted number, we should propagate the taint to
+  // the result.
   if (!taint && JS::isTaintedArray(*obj)){
       taint = JS::getArrayTaint(*obj);
   }

@@ -1702,12 +1702,12 @@ bool TypedArrayObject::set_impl(JSContext* cx, const CallArgs& args) {
     }
 
     if (target && target->bufferEither() && target->bufferEither()->isWasm() && isTaintedValue(args.get(0))) {
-      JS_ReportWasmTaintSink(cx, args.get(0), "WASM Memory (Uint8Array.set)");
+      JS_ReportWasmTaintSink(cx, args.get(0), "WASM Memory (TypedArray.set)");
     }
 
     if (args.length() > 1) {
       if (target && target->bufferEither() && target->bufferEither()->isWasm() && isTaintedValue(args.get(1))){
-        JS_ReportWasmTaintSink(cx, args.get(1), "WASM Memory (Uint8Array.set)");
+        JS_ReportWasmTaintSink(cx, args.get(1), "WASM Memory (TypedArray.set)");
       }
     }
 

@@ -110,11 +110,11 @@ static const JSFunctionSpec boolean_methods[] = {
 static bool Boolean(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  //TODO(SAM) - This is where we need to check for tainted values
-  //for cases where the Boolean constructor is used
+  //TODO(0drai): For cases where the Boolean constructor is used
   //e.g., Boolean(taintedValue)
 
   if (isTaintedNumber(args[0])){
+    // NOTE(0drai): Save since isTainted* checks for type
     double d = args[0].toObject().as<NumberObject>().unbox();
     JSObject *v = NumberObject::create(cx, d);
     args[0].setObject(*v);
@@ -186,6 +186,7 @@ JS_PUBLIC_API bool js::ToBooleanSlow(HandleValue v) {
   MOZ_ASSERT(v.isObject());
   // Workaround for #216
   if (isTaintedNumber(v)) {
+    // NOTE(0drai): Save since isTainted* checks for type
     double d = v.toObject().as<NumberObject>().unbox();
     if (std::isnan(d)) return false;
     return d != 0;

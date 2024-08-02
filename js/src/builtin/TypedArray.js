@@ -603,12 +603,14 @@ function TypedArrayIndexOf(searchElement, fromIndex = 0) {
 
     // Steps 11.b.i-iii.
     if (O[k] === searchElement) {
-      if (searchElement && searchElement.taint?.length > 0) {
+      // Taintfox: add taint to the result if the searchElement is tainted....
+      if (searchElement?.taint?.length > 0) {
           k = AddTaintOperationToNumberFromNumber(O, k, "indexOf", searchElement);
       }
-      else if (O && O.taint?.length > 0){
 
-        //ThrowTypeError(JSMSG_MISSING_FUN_ARG, 0, "%TypedArray%.prototype.some");
+      //... or the source array
+      else if (O?.taint?.length > 0){
+        //TODO(0drai): implement
         //AddTaintOperationToNumberFromArray(O, k, "indexOf");
       }
       return k;
@@ -685,6 +687,7 @@ function TypedArrayJoin(separator) {
     R += sep + ToString(element);
   }
 
+  // Taintfox: add taint to the result if the source array is tainted
   if (O && O.taint?.length > 0){
     AddTaintOperationNative(R, "join", O.taint[0]);
   }
@@ -1041,6 +1044,8 @@ function TypedArraySlice(start, end) {
     }
   }
 
+  // Taintfox: add taint to the result if the source array
+  // or the start index is tainted
   if (start && start.taint?.length > 0) {
     AddTaintOperationToArray(A, "slice", start);
   } else if (O && O.taint?.length > 0){
@@ -1307,6 +1312,7 @@ function TypedArraySubarray(begin, end) {
     newLength
   );
 
+  // Taintfox: add taint to the result if the sliced array or any other parameter is tainted
   if (begin?.taint?.length > 0) {
     AddTaintOperationToArray(result, "subarray", begin);
   } else if (end?.taint?.length > 0) {
@@ -1354,8 +1360,6 @@ function TypedArrayAt(index) {
   if (k < 0 || k >= len) {
     return undefined;
   }
-
-  //ReportWasmTaintSink(obj, obj[k]);
 
   // Step 8.
   return obj[k];
@@ -1592,6 +1596,7 @@ function TypedArrayStaticFrom(source, mapfn = undefined, thisArg = undefined) {
           targetObj[k] = source[k];
         }
 
+        // Taintfox: add taint to the result if the source array is tainted
         if (source?.taint?.length > 0){
           AddTaintOperationToArray(targetObj, "from", source);
         }
@@ -1714,6 +1719,7 @@ function TypedArrayStaticOf(/*...items*/) {
   for (var k = 0; k < len; k++) {
     value = GetArgument(k);
     newObj[k] = value;
+    // Taintfox: add taint to the result if any item is tainted
     if (value?.taint?.length > 0){
       AddTaintOperationToArray(newObj, "of", value);
     }
@@ -2029,6 +2035,7 @@ function TypedArrayToReversed() {
   }
 
   if (O?.taint?.length > 0){
+    // Taintfox: add taint to the result if the source array is tainted
     AddTaintOperationToArray(A, "reversed", O);
   }
 

@@ -236,7 +236,7 @@ bool ArrayBufferViewObject::init(JSContext* cx,
 
   initFixedSlot(BYTEOFFSET_SLOT, PrivateValue(byteOffset));
   initFixedSlot(LENGTH_SLOT, PrivateValue(length));
-  initReservedSlot(TAINT_SLOT, PrivateValue(new TaintFlow()));
+  initReservedSlot(TAINT_SLOT, PrivateValue(nullptr));
   if (buffer) {
     initFixedSlot(BUFFER_SLOT, ObjectValue(*buffer));
   } else {

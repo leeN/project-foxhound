@@ -7,6 +7,7 @@
 #![allow(non_upper_case_globals)]
 // These are needed for the neon SIMD code and can be removed once the MSRV supports the
 // instrinsics we use
+// TODO(0drai): Cannot build taintfox unless this is removed :/
 //#![cfg_attr(feature = "neon", feature(stdsimd))]
 //#![cfg_attr(
 //    feature = "neon",
