@@ -147,60 +147,60 @@ TaintOperation GetTaintOperation(const char* name)
 }
 
 nsresult MarkTaintOperation(StringTaint& aTaint, const char* name) {
-  /*JSContext *cx = nsContentUtils::GetCurrentJSContext();*/
-  /*auto op = GetTaintOperation(cx, name);*/
-  /*op.set_native();*/
-  /*aTaint.extend(op);*/
+  JSContext *cx = nsContentUtils::GetCurrentJSContext();
+  auto op = GetTaintOperation(cx, name);
+  op.set_native();
+  aTaint.extend(op);
   return NS_OK;
 }
 
 static nsresult MarkTaintOperation(JSContext *cx, nsACString &str, const char* name)
 {
-  /*if (str.isTainted()) {*/
-  /*  auto op = GetTaintOperation(cx, name);*/
-  /*  op.set_native();*/
-  /*  str.Taint().extend(op);*/
-  /*}*/
+  if (str.isTainted()) {
+    auto op = GetTaintOperation(cx, name);
+    op.set_native();
+    str.Taint().extend(op);
+  }
   return NS_OK;
 }
 
 nsresult MarkTaintOperation(nsACString &str, const char* name)
 {
-  /*return MarkTaintOperation(nsContentUtils::GetCurrentJSContext(), str, name);*/
+  return MarkTaintOperation(nsContentUtils::GetCurrentJSContext(), str, name);
 }
 
 static nsresult MarkTaintOperation(JSContext *cx, nsAString &str, const char* name)
 {
-  /*if (str.isTainted()) {*/
-  /*  auto op = GetTaintOperation(cx, name);*/
-  /*  op.set_native();*/
-  /*  str.Taint().extend(op);*/
-  /*}*/
+  if (str.isTainted()) {
+    auto op = GetTaintOperation(cx, name);
+    op.set_native();
+    str.Taint().extend(op);
+  }
   return NS_OK;
 }
 
 nsresult MarkTaintOperation(nsAString &str, const char* name, const nsINode* node)
 {
-  /*if (str.isTainted()) {*/
-  /*  TaintOperation op = GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, node);*/
-  /*  op.set_native();*/
-  /*  str.Taint().extend(op);*/
-  /*}*/
+  if (str.isTainted()) {
+    TaintOperation op = GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, node);
+    op.set_native();
+    str.Taint().extend(op);
+  }
   return NS_OK;
 }
 
 nsresult MarkTaintOperation(nsAString &str, const char* name)
 {
-  /*return MarkTaintOperation(nsContentUtils::GetCurrentJSContext(), str, name);*/
+  return MarkTaintOperation(nsContentUtils::GetCurrentJSContext(), str, name);
 }
 
 static nsresult MarkTaintOperation(JSContext *cx, nsAString &str, const char* name, const nsTArray<nsString> &args)
 {
-  /*if (str.isTainted()) {*/
-  /*  auto op = GetTaintOperation(cx, name, args);*/
-  /*  op.set_native();*/
-  /*  str.Taint().extend(op);*/
-  /*}*/
+  if (str.isTainted()) {
+    auto op = GetTaintOperation(cx, name, args);
+    op.set_native();
+    str.Taint().extend(op);
+  }
   return NS_OK;
 }
 
@@ -210,16 +210,16 @@ nsresult MarkTaintOperation(nsAString &str, const char* name, const nsTArray<nsS
 }
 
 static nsresult MarkTaintSource(nsAString &str, TaintOperation operation) {
-  /*operation.setSource();*/
-  /*operation.set_native();*/
-  /*str.Taint().overlay(0, str.Length(), operation);*/
+  operation.setSource();
+  operation.set_native();
+  str.Taint().overlay(0, str.Length(), operation);
   return NS_OK;
 }
 
 static nsresult MarkTaintSource(mozilla::dom::DOMString &str, TaintOperation operation) {
-  /*operation.setSource();*/
-  /*operation.set_native();*/
-  /*str.Taint().overlay(0, str.Length(), operation);*/
+  operation.setSource();
+  operation.set_native();
+  str.Taint().overlay(0, str.Length(), operation);
   return NS_OK;
 }
 
@@ -236,86 +236,86 @@ nsresult MarkTaintSource(JSContext* cx, JSString* str, const char* name)
 
 nsresult MarkTaintSource(JSContext* cx, JS::MutableHandle<JS::Value> aValue, const char* name)
 {
-  /*if (isSourceActive(name)) {*/
-  /*  TaintOperation op = GetTaintOperation(cx, name);*/
-  /*  op.setSource();*/
-  /*  op.set_native();*/
-  /*  JS_MarkTaintSource(cx, aValue, op);*/
-  /*}*/
+  if (isSourceActive(name)) {
+    TaintOperation op = GetTaintOperation(cx, name);
+    op.setSource();
+    op.set_native();
+    JS_MarkTaintSource(cx, aValue, op);
+  }
   return NS_OK;
 }
 
 nsresult MarkTaintSource(JSContext* cx, JS::MutableHandle<JS::Value> aValue, const char* name, const nsAString &arg)
 {
-  /*if (isSourceActive(name)) {*/
-  /*  TaintOperation op = GetTaintOperation(cx, name, arg);*/
-  /*  op.setSource();*/
-  /*  op.set_native();*/
-  /*  JS_MarkTaintSource(cx, aValue, op);*/
-  /*}*/
+  if (isSourceActive(name)) {
+    TaintOperation op = GetTaintOperation(cx, name, arg);
+    op.setSource();
+    op.set_native();
+    JS_MarkTaintSource(cx, aValue, op);
+  }
   return NS_OK;
 }
 
 nsresult MarkTaintSource(nsAString &str, const char* name)
 {
-  /*if (isSourceActive(name)) {*/
-  /*  return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name));*/
-  /*}*/
+  if (isSourceActive(name)) {
+    return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name));
+  }
   return NS_OK;
 }
 
 nsresult MarkTaintSource(nsAString &str, const char* name, const nsAString &arg)
 {
-  /*if (isSourceActive(name)) {*/
-  /*  return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, arg));*/
-  /*}*/
+  if (isSourceActive(name)) {
+    return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, arg));
+  }
   return NS_OK;
 }
 
 static nsresult MarkTaintSource(TaintFlow &flow, TaintOperation operation) {
-  /*operation.setSource();*/
-  /*operation.set_native();*/
-  /*flow.extend(operation);*/
+  operation.setSource();
+  operation.set_native();
+  flow.extend(operation);
   return NS_OK;
 }
 
 nsresult MarkTaintSource(TaintFlow &flow, const char* name, const nsAString &arg)
 {
-  /*if (isSourceActive(name)) {*/
-  /*  flow.extend(GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, arg));*/
-  /*}*/
+  if (isSourceActive(name)) {
+    flow.extend(GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, arg));
+  }
   return NS_OK;
 }
 
 nsresult MarkTaintSource(nsAString &str, const char* name, const nsTArray<nsString> &arg)
 {
-  /*if (isSourceActive(name)) {*/
-  /*  return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, arg));*/
-  /*}*/
+  if (isSourceActive(name)) {
+    return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, arg));
+  }
   return NS_OK;
 }
 
 nsresult MarkTaintSourceElement(nsAString &str, const char* name, const nsINode* node)
 {
-  /*if (isSourceActive(name)) {*/
-  /*  return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, node));*/
-  /*}*/
+  if (isSourceActive(name)) {
+    return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, node));
+  }
   return NS_OK;
 }
 
 nsresult MarkTaintSource(mozilla::dom::DOMString &str, const char* name)
 {
-  /*if (isSourceActive(name)) {*/
-  /*  return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name));*/
-  /*}*/
+  if (isSourceActive(name)) {
+    return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name));
+  }
   return NS_OK;
 }
 
 nsresult MarkTaintSource(mozilla::dom::DOMString &str, const char* name, const nsAString &arg)
 {
-  /*if (isSourceActive(name)) {*/
-  /*  return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, arg));*/
-  /*}*/
+  if (isSourceActive(name)) {
+    return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, arg));
+  }
   return NS_OK;
 }
 
@@ -329,43 +329,43 @@ nsresult MarkTaintSource(mozilla::dom::DOMString &str, const char* name, const n
 
 nsresult MarkTaintSourceElement(mozilla::dom::DOMString &str, const char* name, const nsINode* node)
 {
-  /*if (isSourceActive(name)) {*/
-  /*  return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, node));*/
-  /*}*/
+  if (isSourceActive(name)) {
+    return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, node));
+  }
   return NS_OK;
 }
 
 nsresult MarkTaintSourceAttribute(nsAString &str, const char* name, const mozilla::dom::Element* element,
                                   const nsAString &attr)
 {
-  /*// Check if the element has incoming taint flows*/
-  /*if (element) {*/
-  /*  const TaintList& taintList = element->GetSelectorTaintFlowList();*/
-  /*  if (taintList.hasTaint()) {*/
-  /*    str.Taint().overlay(0, str.Length(),*taintList.begin());*/
-  /*  }*/
-  /*}*/
-  /*if (isSourceActive(name)) {*/
-  /*  return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, element, str, attr));*/
-  /*}*/
+  // Check if the element has incoming taint flows
+  if (element) {
+    const TaintList& taintList = element->GetSelectorTaintFlowList();
+    if (taintList.hasTaint()) {
+      str.Taint().overlay(0, str.Length(),*taintList.begin());
+    }
+  }
+  if (isSourceActive(name)) {
+    return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, element, str, attr));
+  }
   return NS_OK;
 }
 
 nsresult MarkTaintSourceAttribute(mozilla::dom::DOMString &str, const char* name,  const mozilla::dom::Element* element,
                                   const nsAString &attr)
 {
-  /*// Check if the element has incoming taint flows*/
-  /*if (element) {*/
-  /*  const TaintList& taintList = element->GetSelectorTaintFlowList();*/
-  /*  if (taintList.hasTaint()) {*/
-  /*    str.Taint().overlay(0, str.Length(),*taintList.begin());*/
-  /*  }*/
-  /*}*/
-  /*if (isSourceActive(name)) {*/
-  /*  nsAutoString nsStr;*/
-  /*  str.ToString(nsStr);*/
-  /*  return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, element, nsStr, attr));*/
-  /*}*/
+  // Check if the element has incoming taint flows
+  if (element) {
+    const TaintList& taintList = element->GetSelectorTaintFlowList();
+    if (taintList.hasTaint()) {
+      str.Taint().overlay(0, str.Length(),*taintList.begin());
+    }
+  }
+  if (isSourceActive(name)) {
+    nsAutoString nsStr;
+    str.ToString(nsStr);
+    return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, element, nsStr, attr));
+  }
   return NS_OK;
 }
 
