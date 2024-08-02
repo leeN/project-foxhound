@@ -91,6 +91,12 @@ bool isTaintedNumber(const JS::Value& val);
 // Check if the argument value is a tainted number object.
 bool isTaintedValue(const JS::Value& val);
 
+// Check if the argument value is a tainted number object.
+bool isTaintedArray(JSObject& obj);
+
+// Extract the taint information from the first tainted argument.
+const TaintFlow& getArrayTaint(JSObject& obj);
+
 // Extract the taint information from a number.
 const TaintFlow& getNumberTaint(const JS::Value& val);
 

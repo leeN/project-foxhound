@@ -3899,6 +3899,8 @@ static bool array_slice(JSContext* cx, unsigned argc, Value* vp) {
 
   /* Step 12. */
   args.rval().setObject(*arr);
+  //TODO(SAM) - Trace the array object
+  /*arr->as<ArrayObject>()*/
   return true;
 }
 
@@ -4974,6 +4976,7 @@ static inline bool ArrayConstructorImpl(JSContext* cx, CallArgs& args,
 
 /* ES5 15.4.2 */
 bool js::ArrayConstructor(JSContext* cx, unsigned argc, Value* vp) {
+  //TODO(SAM) - Trace the array object
   AutoJSConstructorProfilerEntry pseudoFrame(cx, "Array");
   CallArgs args = CallArgsFromVp(argc, vp);
   return ArrayConstructorImpl(cx, args, /* isConstructor = */ true);

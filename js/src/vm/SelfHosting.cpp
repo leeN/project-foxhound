@@ -98,6 +98,7 @@
 #include "vm/JSFunction-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
+#include "vm/NumberObject-inl.h"
 #include "vm/TypedArrayObject-inl.h"
 
 using namespace js;
@@ -1858,6 +1859,89 @@ taint_addTaintOperation_native(JSContext* cx, unsigned argc, Value* vp)
     return true;
 }
 
+static bool
+taint_addTaintOperationToArray(JSContext* cx, unsigned argc, Value* vp)
+{
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  RootedObject dataObj(cx, &args[0].toObject());
+
+  if (!dataObj || !dataObj->canUnwrapAs<ArrayBufferViewObject>()) {
+    return false;
+  }
+
+  RootedString opName(cx, args[1].toString());
+  if (!opName) {
+    return false;
+  }
+
+  UniqueChars op_chars = JS_EncodeStringToUTF8(cx, opName);
+  if (!op_chars) {
+    return false;
+  }
+
+  TaintFlow anyTaintFlow = getValueTaint(args[2]);
+  TaintFlow sliceTaintFlow = TaintFlow(TaintOperationFromContext(cx,op_chars.get(), true));
+  TaintFlow combined = TaintFlow::append(anyTaintFlow, sliceTaintFlow);
+
+  dataObj->as<ArrayBufferViewObject>().setTaint(combined);
+
+  return true;
+}
+
+
+static bool
+taint_reportWasmTaintSink(JSContext* cx, unsigned argc, Value* vp){
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  RootedObject dataObj(cx, &args[0].toObject());
+  if (!dataObj || !dataObj->canUnwrapAs<ArrayBufferViewObject>()) {
+    return false;
+  }
+
+  const auto *abvo = &dataObj->as<ArrayBufferViewObject>();
+
+  if (! (abvo && abvo->bufferEither() && abvo->bufferEither()->isWasm())) {
+    return false;
+  }
+
+  JS_ReportWasmTaintSink(cx, args[1], "WASM Memory");
+
+  return true;
+
+
+}
+
+
+static bool
+taint_addTaintOperationToNumberFromNumber(JSContext* cx, unsigned argc, Value* vp)
+{
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (!JS::isTaintedNumber(args[3])){
+    return false;
+  }
+
+  RootedString opName(cx, args[2].toString());
+  if (!opName) {
+    return false;
+  }
+
+  UniqueChars op_chars = JS_EncodeStringToUTF8(cx, opName);
+  if (!op_chars) {
+    return false;
+  }
+
+  TaintFlow numberTaintFlow = JS::getNumberTaint(args[3]);
+  TaintFlow indexOfTaintFlow = TaintFlow(TaintOperationFromContext(cx, op_chars.get(), true));
+  TaintFlow combined = TaintFlow::append(numberTaintFlow, indexOfTaintFlow);
+
+  args.rval().setObject(*NumberObject::createTainted(cx, args[1].toNumber(), combined));
+
+  return true;
+
+}
+
 // TaintFox: Returns a copy of the given string.
 static bool
 taint_copyString(JSContext* cx, unsigned argc, Value* vp)
@@ -2080,6 +2164,9 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("AddTaintOperation", taint_addTaintOperation, 2, 0),
     JS_FN("AddTaintOperationNative", taint_addTaintOperation_native, 2, 0),
     JS_FN("AddTaintOperationNativeFull", taint_addTaintOperation_native_full, 2, 0),
+    JS_FN("AddTaintOperationToArray", taint_addTaintOperationToArray, 3, 0),
+    JS_FN("ReportWasmTaintSink", taint_reportWasmTaintSink, 2, 0 ),
+    JS_FN("AddTaintOperationToNumberFromNumber", taint_addTaintOperationToNumberFromNumber, 4, 0),
     JS_INLINABLE_FN("ArrayBufferByteLength",
                     intrinsic_ArrayBufferByteLength<ArrayBufferObject>, 1, 0,
                     IntrinsicArrayBufferByteLength),

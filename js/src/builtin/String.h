@@ -35,6 +35,8 @@ extern bool str_fromCodePoint_one_arg(JSContext* cx, HandleValue code,
 // TaintFox: Exported for the js shell: taint(str).
 bool str_tainted(JSContext* cx, unsigned argc, Value* vp);
 
+bool str_taintedFromArray(JSContext* cx, unsigned argc, Value* vp);
+
 extern bool str_includes(JSContext* cx, unsigned argc, Value* vp);
 
 extern bool str_indexOf(JSContext* cx, unsigned argc, Value* vp);

@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cstdarg>
+#include <cstring>
 #ifdef __linux__
 #  include <dlfcn.h>
 #endif
@@ -4956,11 +4957,27 @@ JS_ReportTaintSink(JSContext* cx, JS::HandleString str, const char* sink, JS::Ha
   // Print a message to stdout. Also include the current JS backtrace.
   auto& firstRange = *str->taint().begin();
 
+  bool hasWasm = false;
+
+  // Check if the tainted string is a wasm string
+  for (TaintRange& range : str->taint()) {
+    for(TaintNodeBase& node: range.flow()){
+      const auto *name = node.operation().name();
+      if (std::strstr(name, "WASM")){
+        hasWasm = true;
+      }
+    }
+  }
+
   std::cerr << "!!! Tainted flow into " << sink << " from " << firstRange.flow().source().name() << " !!!" << std::endl;
   // DumpBacktrace(cx);
 
   // Report a warning to show up on the web console
+  if (hasWasm) {
+  JS_ReportWarningUTF8(cx, "WASM Tainted flow from %s into %s!", firstRange.flow().source().name(), sink);
+  } else {
   JS_ReportWarningUTF8(cx, "Tainted flow from %s into %s!", firstRange.flow().source().name(), sink);
+  }
 
   // Extend the taint flow to include the sink function
   str->taint().extend(TaintOperationFromContext(cx, sink, true, arg, true));
@@ -4976,7 +4993,7 @@ JS_ReportTaintSink(JSContext* cx, JS::HandleString str, const char* sink, JS::Ha
   RootedValue slot(cx, JS::GetReservedSlot(global, TAINT_REPORT_FUNCTION_SLOT));
   if (slot.isUndefined()) {
     // Need to compile.
-    const char* argnames[3] = {"str", "sink", "stack"};
+    const char* argnames[4] = {"str", "sink", "stack", "hasWasm"};
     const char* funbody =
       "if (typeof window !== 'undefined' && typeof document !== 'undefined') {\n"
       "    var t = window;\n"
@@ -4995,6 +5012,7 @@ JS_ReportTaintSink(JSContext* cx, JS::HandleString str, const char* sink, JS::Ha
       "        loc: location.href,\n"
       "        parentloc: pl,\n"
       "        referrer: document.referrer,\n"
+      "        hasWasm: hasWasm,\n"
       "        str: str,\n"
       "        sink: sink,\n"
       "        stack: stack\n"
@@ -5006,7 +5024,7 @@ JS_ReportTaintSink(JSContext* cx, JS::HandleString str, const char* sink, JS::Ha
 
     RootedObjectVector emptyScopeChain(cx);
     report = CompileFunctionUtf8(cx, emptyScopeChain,
-                                 options, "ReportTaintSink", 3,
+                                 options, "ReportTaintSink", 4,
                                  argnames, funbody, strlen(funbody));
     MOZ_ASSERT(report);
 
@@ -5023,7 +5041,7 @@ JS_ReportTaintSink(JSContext* cx, JS::HandleString str, const char* sink, JS::Ha
     return;
   }
 
-  JS::RootedValueArray<3> arguments(cx);
+  JS::RootedValueArray<4> arguments(cx);
   arguments[0].setString(str);
   arguments[1].setString(NewStringCopyZ<CanGC>(cx, sink));
   if (stack) {
@@ -5031,11 +5049,109 @@ JS_ReportTaintSink(JSContext* cx, JS::HandleString str, const char* sink, JS::Ha
   } else {
     arguments[2].setUndefined();
   }
+  arguments[3].setBoolean(hasWasm);
 
   RootedValue rval(cx);
   JS_CallFunction(cx, nullptr, report, arguments, &rval);
   MOZ_ASSERT(!cx->isExceptionPending());
 }
+
+JS_PUBLIC_API void
+JS_ReportWasmTaintSink(JSContext* cx, JS::HandleValue arg, const char* sink)
+{
+
+  const unsigned TAINT_REPORT_FUNCTION_SLOT = 5;
+
+  if (!isTaintedValue(arg)){
+    printf(">>>>> isnot tained\n");
+    return;
+  }
+
+  const TaintFlow taint = getValueTaint(arg);
+
+  // Print a message to stdout. Also include the current JS backtrace.
+  const char* firstRange = taint.source().name();
+  printf("firstRange: %s\n", firstRange);
+
+  printf("!!! Tainted flow into %s from %s !!!\n", sink, firstRange);
+  JS_ReportWarningUTF8(cx, "WASM Tainted flow from %s into %s!", firstRange, sink);
+
+  RootedFunction report(cx);
+
+  JSObject* global = cx->global();
+
+  RootedValue slot(cx, JS::GetReservedSlot(global, TAINT_REPORT_FUNCTION_SLOT));
+  if (slot.isUndefined()) {
+    // Need to compile.
+    const char* argnames[4] = {"str", "sink", "stack", "hasWasm"};
+    const char* funbody =
+      "if (typeof window !== 'undefined' && typeof document !== 'undefined') {\n"
+      "    var t = window;\n"
+      "    if (location.protocol == 'javascript:' || location.protocol == 'data:' || location.protocol == 'about:') {\n"
+      "        t = parent.window;\n"
+      "    }\n"
+      "    var pl;\n"
+      "    try {\n"
+      "        pl = parent.location.href;\n"
+      "    } catch (e) {\n"
+      "        pl = 'different origin';\n"
+      "    }\n"
+      "    var e = document.createEvent('CustomEvent');\n"
+      "    e.initCustomEvent('__taintreport', true, false, {\n"
+      "        subframe: t !== window,\n"
+      "        loc: location.href,\n"
+      "        parentloc: pl,\n"
+      "        referrer: document.referrer,\n"
+      "        hasWasm: hasWasm,\n"
+      "        str: str,\n"
+      "        sink: sink,\n"
+      "        stack: stack\n"
+      "    });\n"
+      "    t.dispatchEvent(e);\n"
+      "}";
+    CompileOptions options(cx);
+    options.setFile("taint_reporting.js");
+
+    RootedObjectVector emptyScopeChain(cx);
+    report = CompileFunctionUtf8(cx, emptyScopeChain,
+                                 options, "ReportTaintSink", 4,
+                                 argnames, funbody, strlen(funbody));
+    MOZ_ASSERT(report);
+
+    // Store the compiled function into the current global object.
+    JS_SetReservedSlot(global, TAINT_REPORT_FUNCTION_SLOT, ObjectValue(*report));
+  } else {
+    report = JS_ValueToFunction(cx, slot);
+  }
+
+  RootedObject stack(cx);
+  if (!JS::CaptureCurrentStack(cx, &stack,
+                               JS::StackCapture(JS::AllFrames()))) {
+    JS_ReportErrorUTF8(cx, "Invalid stack object in CaptureCurrentStack!");
+    return;
+  }
+
+  JS::RootedValueArray<4> arguments(cx);
+  if (arg.isObject()){
+    arguments[0].setObject(arg.toObject());
+  } else if (arg.isString()){
+    arguments[0].setString(arg.toString());
+  } else {
+    arguments[0].setNull();
+  }
+  arguments[1].setString(NewStringCopyZ<CanGC>(cx, sink));
+  if (stack) {
+    arguments[2].setObject(*stack);
+  } else {
+    arguments[2].setUndefined();
+  }
+  arguments[3].setBoolean(true);
+
+  RootedValue rval(cx);
+  JS_CallFunction(cx, nullptr, report, arguments, &rval);
+  MOZ_ASSERT(!cx->isExceptionPending());
+}
+
 
 JS_PUBLIC_API bool JS::FinishIncrementalEncoding(JSContext* cx,
                                                  JS::HandleScript script,

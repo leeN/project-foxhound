@@ -440,6 +440,12 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     if (!obj || !obj->init(cx, buffer, byteOffset, len, BYTES_PER_ELEMENT)) {
       return nullptr;
     }
+    obj->setReservedSlot(TAINT_SLOT, PrivateValue(nullptr));
+
+    if (buffer && buffer->isWasm()) {
+      obj->setTaint(
+          TaintFlow(TaintOperationFromContext(cx, "WASM Array taint source", true)));
+    }
 
     return obj;
   }
@@ -997,6 +1003,10 @@ template <typename NativeType>
     TypedArrayObjectTemplate<NativeType>::setIndex(*obj, index, nativeValue);
   }
 
+  if (obj && obj->bufferEither() && obj->bufferEither()->isWasm() && isTaintedValue(v)){
+    JS_ReportWasmTaintSink(cx, v, "WASM Memory (setElement)");
+  }
+
   // Step 5.
   return result.succeed();
 }
@@ -1468,6 +1478,7 @@ static bool TypedArray_toStringTagGetter(JSContext* cx, unsigned argc,
     JS_PSG("buffer", TypedArray_bufferGetter, 0),
     JS_PSG("byteLength", TypedArray_byteLengthGetter, 0),
     JS_PSG("byteOffset", TypedArray_byteOffsetGetter, 0),
+    JS_PSG("taint", js::Array_taintGetter, JSPROP_PERMANENT),
     JS_SYM_GET(toStringTag, TypedArray_toStringTagGetter, 0),
     JS_PS_END};
 
@@ -1649,6 +1660,11 @@ bool TypedArrayObject::set_impl(JSContext* cx, const CallArgs& args) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_BAD_INDEX);
       return false;
     }
+
+    if (isTaintedNumber(args[1])){
+      target->setTaint(getNumberTaint(args[1]));
+    }
+
   }
 
   // 23.2.3.24.1, steps 1-2.
@@ -1684,6 +1700,17 @@ bool TypedArrayObject::set_impl(JSContext* cx, const CallArgs& args) {
     if (!SetTypedArrayFromTypedArray(cx, target, targetOffset, srcTypedArray)) {
       return false;
     }
+
+    if (target && target->bufferEither() && target->bufferEither()->isWasm() && isTaintedValue(args.get(0))) {
+      JS_ReportWasmTaintSink(cx, args.get(0), "WASM Memory (Uint8Array.set)");
+    }
+
+    if (args.length() > 1) {
+      if (target && target->bufferEither() && target->bufferEither()->isWasm() && isTaintedValue(args.get(1))){
+        JS_ReportWasmTaintSink(cx, args.get(1), "WASM Memory (Uint8Array.set)");
+      }
+    }
+
   } else {
     if (!SetTypedArrayFromArrayLike(cx, target, targetOffset, src)) {
       return false;
@@ -1847,6 +1874,12 @@ bool TypedArrayObject::copyWithin(JSContext* cx, unsigned argc, Value* vp) {
     JS_SELF_HOSTED_FN("subarray", "TypedArraySubarray", 2, 0),
     JS_FN("set", TypedArrayObject::set, 1, 0),
     JS_FN("copyWithin", TypedArrayObject::copyWithin, 2, 0),
+    // In contrast to Number and Strings, we cannot manually taint an array
+    // without losing the semantic type information. Thus we manually taint in two steps:
+    // js > a = new Uint8Array([...])
+    // js > a.taintMe();
+    JS_FN("taintMe", js::Array_taintMe, 0,0),
+    JS_FN("taintFromString", js::Array_taintFromString, 2,0),
     JS_SELF_HOSTED_FN("every", "TypedArrayEvery", 1, 0),
     JS_SELF_HOSTED_FN("fill", "TypedArrayFill", 3, 0),
     JS_SELF_HOSTED_FN("filter", "TypedArrayFilter", 1, 0),

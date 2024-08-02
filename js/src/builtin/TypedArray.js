@@ -603,6 +603,14 @@ function TypedArrayIndexOf(searchElement, fromIndex = 0) {
 
     // Steps 11.b.i-iii.
     if (O[k] === searchElement) {
+      if (searchElement && searchElement.taint?.length > 0) {
+          k = AddTaintOperationToNumberFromNumber(O, k, "indexOf", searchElement);
+      }
+      else if (O && O.taint?.length > 0){
+
+        //ThrowTypeError(JSMSG_MISSING_FUN_ARG, 0, "%TypedArray%.prototype.some");
+        //AddTaintOperationToNumberFromArray(O, k, "indexOf");
+      }
       return k;
     }
   }
@@ -675,6 +683,10 @@ function TypedArrayJoin(separator) {
 
     // Steps 8.a and 8.c-d.
     R += sep + ToString(element);
+  }
+
+  if (O && O.taint?.length > 0){
+    AddTaintOperationNative(R, "join", O.taint[0]);
   }
 
   // Step 9.
@@ -1029,6 +1041,12 @@ function TypedArraySlice(start, end) {
     }
   }
 
+  if (start && start.taint?.length > 0) {
+    AddTaintOperationToArray(A, "slice", start);
+  } else if (O && O.taint?.length > 0){
+    AddTaintOperationToArray(A, "slice", O);
+  }
+
   // Step 16.
   return A;
 }
@@ -1282,12 +1300,22 @@ function TypedArraySubarray(begin, end) {
   var beginByteOffset = srcByteOffset + beginIndex * elementSize;
 
   // Steps 15-16.
-  return TypedArraySpeciesCreateWithBuffer(
+  var result =  TypedArraySpeciesCreateWithBuffer(
     obj,
     buffer,
     beginByteOffset,
     newLength
   );
+
+  if (begin?.taint?.length > 0) {
+    AddTaintOperationToArray(result, "subarray", begin);
+  } else if (end?.taint?.length > 0) {
+    AddTaintOperationToArray(result, "subarray", end);
+  } else if (obj?.taint?.length > 0){
+    AddTaintOperationToArray(result, "subarray", obj);
+  }
+
+  return result;
 }
 
 // https://tc39.es/proposal-relative-indexing-method
@@ -1326,6 +1354,8 @@ function TypedArrayAt(index) {
   if (k < 0 || k >= len) {
     return undefined;
   }
+
+  //ReportWasmTaintSink(obj, obj[k]);
 
   // Step 8.
   return obj[k];
@@ -1562,6 +1592,10 @@ function TypedArrayStaticFrom(source, mapfn = undefined, thisArg = undefined) {
           targetObj[k] = source[k];
         }
 
+        if (source?.taint?.length > 0){
+          AddTaintOperationToArray(targetObj, "from", source);
+        }
+
         // Step 7.g.
         return targetObj;
       }
@@ -1577,6 +1611,10 @@ function TypedArrayStaticFrom(source, mapfn = undefined, thisArg = undefined) {
 
         // Steps 7.a, 7.d-f.
         TypedArrayInitFromPackedArray(targetObj, source);
+
+        if (source?.taint?.length > 0){
+          AddTaintOperationToArray(targetObj, "from", source);
+        }
 
         // Step 7.g.
         return targetObj;
@@ -1611,6 +1649,9 @@ function TypedArrayStaticFrom(source, mapfn = undefined, thisArg = undefined) {
     // the list's start in the loop above. That would introduce unacceptable overhead.
     // Additionally, the loop's logic is simple enough not to require the assert.
 
+    if (source?.taint?.length > 0){
+      AddTaintOperationToArray(targetObj, "from", source);
+    }
     // Step 7.g.
     return targetObj;
   }
@@ -1639,6 +1680,9 @@ function TypedArrayStaticFrom(source, mapfn = undefined, thisArg = undefined) {
 
     // Step 13.e.
     targetObj[k] = mappedValue;
+    if (kValue?.taint?.length > 0){
+      AddTaintOperationToArray(targetObj, "from", kValue);
+    }
   }
 
   // Step 14.
@@ -1664,9 +1708,15 @@ function TypedArrayStaticOf(/*...items*/) {
   // Step 5.
   var newObj = TypedArrayCreateWithLength(C, len);
 
+  var value = null;
+
   // Steps 6-7.
   for (var k = 0; k < len; k++) {
-    newObj[k] = GetArgument(k);
+    value = GetArgument(k);
+    newObj[k] = value;
+    if (value?.taint?.length > 0){
+      AddTaintOperationToArray(newObj, "of", value);
+    }
   }
 
   // Step 8.
@@ -1976,6 +2026,10 @@ function TypedArrayToReversed() {
     var fromValue = O[from];
     // Step 5.d. Perform ! Set(A, k, kValue, true).
     A[k] = fromValue;
+  }
+
+  if (O?.taint?.length > 0){
+    AddTaintOperationToArray(A, "reversed", O);
   }
 
   // Step 7. Return A.

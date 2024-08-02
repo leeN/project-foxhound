@@ -155,6 +155,51 @@ js::str_tainted(JSContext* cx, unsigned argc, Value* vp)
   return true;
 }
 
+bool js::str_taintedFromArray(JSContext* cx, unsigned argc, Value* vp)
+{
+  // String.taintedFromArray(string, operation, array, array.taint.length)
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  RootedString str(cx, ArgToLinearString(cx, args, 0));
+  if (!str || str->length() == 0) {
+    return false;
+  }
+
+  RootedString opName(cx, args[1].toString());
+  if (!opName) {
+    return false;
+  }
+
+  UniqueChars op_chars = JS_EncodeStringToUTF8(cx, opName);
+  if (!op_chars) {
+    return false;
+  }
+
+  TaintFlow op = TaintFlow(TaintOperationFromContext(cx,op_chars.get(), true));
+  TaintFlow arrayTaintFlow = JS::getValueTaint(args[2]);
+  TaintFlow combined = TaintFlow::append(op, arrayTaintFlow);
+
+  double taintFlowSize = 0;
+
+  if (!ToInteger(cx, args[3], &taintFlowSize)) {
+    return false;
+  }
+
+  SafeStringTaint taint(combined, taintFlowSize + 1);
+
+  JSString* tainted_str = NewDependentString(cx, str, 0, str->length());
+  if (!tainted_str) {
+    return false;
+  }
+
+  tainted_str->setTaint(taint);
+
+  MOZ_ASSERT(tainted_str->isTainted());
+
+  args.rval().setString(tainted_str);
+  return true;
+}
+
 /*
  * TaintFox: taint property implementation.
  *
@@ -4508,6 +4553,7 @@ static const JSFunctionSpec string_static_methods[] = {
 
     // TaintFox: Helper function for manual taint sources.
     JS_FN("tainted",              str_tainted,          1,0),
+    JS_FN("taintedFromArray", str_taintedFromArray, 4,0),
 
     JS_FS_END};
 

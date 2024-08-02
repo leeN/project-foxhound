@@ -15,6 +15,9 @@
 
 namespace js {
 
+bool Array_taintMe(JSContext* cx, unsigned argc, Value* vp);
+bool Array_taintGetter(JSContext* cx, unsigned argc, Value* vp);
+bool Array_taintFromString(JSContext* cx, unsigned argc, Value* vp);
 /*
  * ArrayBufferViewObject
  *
@@ -39,10 +42,12 @@ class ArrayBufferViewObject : public NativeObject {
   // Offset of view within underlying (Shared)ArrayBufferObject.
   static constexpr size_t BYTEOFFSET_SLOT = 2;
 
-  // Pointer to raw buffer memory.
-  static constexpr size_t DATA_SLOT = 3;
+  static constexpr size_t TAINT_SLOT = 3;
 
-  static constexpr size_t RESERVED_SLOTS = 4;
+  // Pointer to raw buffer memory.
+  static constexpr size_t DATA_SLOT = 4;
+
+  static constexpr size_t RESERVED_SLOTS = 5;
 
 #ifdef DEBUG
   static const uint8_t ZeroLengthArrayData = 0x4A;
@@ -68,10 +73,37 @@ class ArrayBufferViewObject : public NativeObject {
     return maybePtrFromReservedSlot<void>(DATA_SLOT);
   }
 
+  inline TaintFlow* getTaintFlow() const {
+    TaintFlow* n = maybePtrFromReservedSlot<TaintFlow>(TAINT_SLOT);
+    return n;
+  }
+
+  inline void setTaintFlow(const TaintFlow& flow) {
+    setReservedSlot(TAINT_SLOT, PrivateValue(new TaintFlow(flow)));
+  }
+
  public:
   [[nodiscard]] bool init(JSContext* cx, ArrayBufferObjectMaybeShared* buffer,
                           size_t byteOffset, size_t length,
                           uint32_t bytesPerElement);
+
+
+  const TaintFlow& taint() const {
+    TaintFlow* flow = getTaintFlow();
+    if (flow) {
+      return *flow;
+    }
+    return TaintFlow::getEmptyTaintFlow();
+  }
+
+  void setTaint(const TaintFlow& taint) {
+    setTaintFlow(taint);
+  }
+
+  bool isTainted() const {
+    return !!getTaintFlow();
+  }
+
 
   static ArrayBufferObjectMaybeShared* ensureBufferObject(
       JSContext* cx, Handle<ArrayBufferViewObject*> obj);

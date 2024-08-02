@@ -8582,9 +8582,13 @@ Taint(JSContext* cx, unsigned argc, Value* vp)
 
   if (args[0].isNumber()) {
     return Number_tainted(cx, argc, vp);
-  } else {
-    return str_tainted(cx, argc, vp);
   }
+
+  if (args[0].isObject() && args[0].toObject().canUnwrapAs<ArrayBufferViewObject>()) {
+    return Array_taintMe(cx, argc, vp);
+  }
+
+  return str_tainted(cx, argc, vp);
 }
 
 #ifndef __wasi__

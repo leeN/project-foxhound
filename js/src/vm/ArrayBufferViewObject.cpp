@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "vm/ArrayBufferViewObject.h"
+#include "jstaint.h"
 
 #include "builtin/DataViewObject.h"
 #include "gc/Nursery.h"
@@ -20,6 +21,117 @@
 #include "vm/NativeObject-inl.h"
 
 using namespace js;
+
+bool js::Array_taintGetter(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  args.rval().setUndefined();
+
+  RootedObject array(cx, &args.thisv().toObject());
+
+  // Return, if not tainted
+  if (!array->as<ArrayBufferViewObject>().isTainted()) {
+    args.rval().setUndefined();
+    return true;
+  }
+
+  const TaintFlow& taint = array->as<ArrayBufferViewObject>().taint();
+  // TODO(samuel) refactor into separate function
+  RootedValueVector taint_flow(cx);
+  for (auto& taint_node : taint) {
+    RootedObject node(cx, JS_NewObject(cx, nullptr));
+    if (!node) {
+      return false;
+    }
+
+    RootedString operation(
+        cx, JS_NewStringCopyZ(cx, taint_node.operation().name()));
+    if (!operation) {
+      return false;
+    }
+
+    if (!JS_DefineProperty(
+            cx, node, "operation", operation,
+            JSPROP_READONLY | JSPROP_ENUMERATE | JSPROP_PERMANENT)) {
+      return false;
+    }
+
+    // Wrap the arguments.
+    RootedValueVector taint_arguments(cx);
+    for (const auto& taint_argument : taint_node.operation().arguments()) {
+      RootedString argument(cx,
+                            JS_NewUCStringCopyZ(cx, taint_argument.c_str()));
+      if (!argument) {
+        return false;
+      }
+
+      if (!taint_arguments.append(StringValue(argument))) {
+        return false;
+      }
+    }
+
+    RootedObject arguments(cx, NewDenseCopiedArray(cx, taint_arguments.length(),
+                                                   taint_arguments.begin()));
+    if (!JS_DefineProperty(
+            cx, node, "arguments", arguments,
+            JSPROP_READONLY | JSPROP_ENUMERATE | JSPROP_PERMANENT)) {
+      return false;
+    }
+
+    if (!taint_flow.append(ObjectValue(*node))) {
+      return false;
+    }
+  }
+
+  args.rval().setObject(
+      *NewDenseCopiedArray(cx, taint_flow.length(), taint_flow.begin()));
+
+  return true;
+}
+
+// TaintFox: taint arrays manually using this method.
+bool js::Array_taintMe(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(TypedArrayObject::is(args.thisv()));
+
+  RootedObject dataObj(cx, &args.thisv().toObject().as<TypedArrayObject>());
+
+  dataObj->as<ArrayBufferViewObject>().setTaint(TaintFlow(
+      TaintOperationFromContext(cx, "manual array taint source", true)));
+
+  args.rval().setObject(*dataObj);
+
+  return true;
+}
+bool js::Array_taintFromString(JSContext* cx, unsigned argc, Value* vp) {
+  // TypedArray.taintedFromString(taintedString, "encode");
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(TypedArrayObject::is(args.thisv()));
+  RootedObject dataObj(cx, &args.thisv().toObject().as<TypedArrayObject>());
+
+  Rooted<JSLinearString*> str(cx, ToString<CanGC>(cx, args[0])->ensureLinear(cx));
+  if (!str) {
+    return false;
+  }
+
+  SafeStringTaint taint = str->taint();
+
+  RootedString opName(cx, args[1].toString());
+  if (!opName) {
+    return false;
+  }
+
+  UniqueChars op_chars = JS_EncodeStringToUTF8(cx, opName);
+  if (!op_chars) {
+    return false;
+  }
+  TaintOperation op = TaintOperationFromContext(cx,op_chars.get(), true, str);
+
+  dataObj->as<ArrayBufferViewObject>().setTaint(op);
+
+  args.rval().setObject(*dataObj);
+
+  return true;
+}
 
 // This method is used to trace TypedArrayObjects and DataViewObjects. It
 // updates the object's data pointer if it points to inline data in an object
@@ -60,6 +172,7 @@ void ArrayBufferViewObject::notifyBufferDetached() {
   setFixedSlot(LENGTH_SLOT, PrivateValue(size_t(0)));
   setFixedSlot(BYTEOFFSET_SLOT, PrivateValue(size_t(0)));
   setFixedSlot(DATA_SLOT, UndefinedValue());
+  setReservedSlot(TAINT_SLOT, UndefinedValue());
 }
 
 void ArrayBufferViewObject::notifyBufferMoved(uint8_t* srcBufStart,
@@ -123,6 +236,7 @@ bool ArrayBufferViewObject::init(JSContext* cx,
 
   initFixedSlot(BYTEOFFSET_SLOT, PrivateValue(byteOffset));
   initFixedSlot(LENGTH_SLOT, PrivateValue(length));
+  initReservedSlot(TAINT_SLOT, PrivateValue(new TaintFlow()));
   if (buffer) {
     initFixedSlot(BUFFER_SLOT, ObjectValue(*buffer));
   } else {

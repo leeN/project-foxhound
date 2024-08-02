@@ -22,6 +22,7 @@
 #include "vm/FrameIter.h"
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
+#include "vm/JSObject.h"
 #include "vm/NumberObject.h"
 #include "vm/StringType.h"
 
@@ -379,29 +380,62 @@ bool JS::isTaintedNumber(const Value& val)
     return false;
 }
 
+bool JS::isTaintedArray(JSObject &obj){
+  if (obj.canUnwrapAs<ArrayBufferViewObject>()) {
+    ArrayBufferViewObject& abvo =  obj.unwrapAs<ArrayBufferViewObject>();
+    return abvo.isTainted();
+  }
+
+  return false;
+}
+
+const TaintFlow& JS::getArrayTaint(JSObject& obj)
+{
+    if (obj.canUnwrapAs<ArrayBufferViewObject>()) {
+      ArrayBufferViewObject& abvo =  obj.unwrapAs<ArrayBufferViewObject>();
+      return abvo.taint();
+    }
+    return TaintFlow::getEmptyTaintFlow();
+}
+
+
 bool JS::isTaintedValue(const Value& val)
 {
-    if (val.isObject() && val.toObject().is<NumberObject>()) {
-        NumberObject& number = val.toObject().as<NumberObject>();
-        return number.isTainted();
-    } else if (val.isString()) {
-        return val.toString()->isTainted();
+  if (val.isObject() ) {
+    if (val.toObject().is<NumberObject>()){
+      NumberObject& number = val.toObject().as<NumberObject>();
+      return number.isTainted();
     }
-    return false;
+
+    if (val.toObject().canUnwrapAs<ArrayBufferViewObject>()) {
+      ArrayBufferViewObject& abvo = val.toObject().unwrapAs<ArrayBufferViewObject>();
+      return abvo.isTainted();
+    }
+
+  } else if (val.isString()) {
+    return val.toString()->isTainted();
+  }
+  return false;
 }
 
 const TaintFlow& JS::getValueTaint(const Value& val)
 {
-    if (val.isObject() && val.toObject().is<NumberObject>()) {
-        NumberObject& number = val.toObject().as<NumberObject>();
-        return number.taint();
-    } else if (val.isString()) {
-        for (auto& range: val.toString()->Taint()) {
-          // Just return first taint range
-          return range.flow();
-        }
+  if (val.isObject() ) {
+    if (val.toObject().is<NumberObject>()){
+      NumberObject& number = val.toObject().as<NumberObject>();
+      return number.taint();
     }
-    return TaintFlow::getEmptyTaintFlow();
+
+    if (val.toObject().canUnwrapAs<ArrayBufferViewObject>()) {
+      ArrayBufferViewObject& abvo =  val.toObject().unwrapAs<ArrayBufferViewObject>();
+      return abvo.taint();
+    }
+  } else if (val.isString()) {
+    for (auto range: val.toString()->Taint()) {
+      return range.flow();
+    }
+  }
+  return TaintFlow::getEmptyTaintFlow();
 }
 
 const TaintFlow& JS::getNumberTaint(const Value& val)

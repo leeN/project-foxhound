@@ -139,7 +139,7 @@ extern JS_PUBLIC_API JSObject* UnwrapReadableStream(JSObject* obj);
 namespace detail {
 
 constexpr size_t TypedArrayLengthSlot = 1;
-constexpr size_t TypedArrayDataSlot = 3;
+constexpr size_t TypedArrayDataSlot = 4;
 
 }  // namespace detail
 

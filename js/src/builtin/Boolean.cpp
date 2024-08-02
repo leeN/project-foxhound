@@ -21,6 +21,7 @@
 #include "vm/JSObject.h"
 
 #include "vm/BooleanObject-inl.h"
+#include "vm/NumberObject-inl.h"
 
 using namespace js;
 
@@ -109,6 +110,16 @@ static const JSFunctionSpec boolean_methods[] = {
 static bool Boolean(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
+  //TODO(SAM) - This is where we need to check for tainted values
+  //for cases where the Boolean constructor is used
+  //e.g., Boolean(taintedValue)
+
+  if (isTaintedNumber(args[0])){
+    double d = args[0].toObject().as<NumberObject>().unbox();
+    JSObject *v = NumberObject::create(cx, d);
+    args[0].setObject(*v);
+  }
+
   // Step 1.
   bool b = args.length() != 0 ? JS::ToBoolean(args[0]) : false;
 
@@ -173,5 +184,12 @@ JS_PUBLIC_API bool js::ToBooleanSlow(HandleValue v) {
 #endif
 
   MOZ_ASSERT(v.isObject());
+  // Workaround for #216
+  if (isTaintedNumber(v)) {
+    double d = v.toObject().as<NumberObject>().unbox();
+    if (std::isnan(d)) return false;
+    return d != 0;
+  }
+
   return !EmulatesUndefined(&v.toObject());
 }

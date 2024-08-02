@@ -1390,7 +1390,7 @@ StringTaint ParseTaint(const std::string& str)
 
 #if (DEBUG_E2E_TAINTING)
     std::cout << "Done parsing taint. Result: " << std::endl;
-    PrintTaint(taint);
+    /*PrintTaint(taint);*/
 #endif
 
     return taint;

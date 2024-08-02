@@ -1046,6 +1046,9 @@ JS_ReportTaintSink(JSContext* cx, JS::HandleString str, const char* sink);
 extern JS_PUBLIC_API void
 JS_ReportTaintSink(JSContext* cx, JS::HandleValue val, const char* sink);
 
+extern JS_PUBLIC_API void
+JS_ReportWasmTaintSink(JSContext* cx, JS::HandleValue args, const char* sink);
+
 namespace JS {
 
 /**

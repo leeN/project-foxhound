@@ -7,12 +7,12 @@
 #![allow(non_upper_case_globals)]
 // These are needed for the neon SIMD code and can be removed once the MSRV supports the
 // instrinsics we use
-#![cfg_attr(feature = "neon", feature(stdsimd))]
-#![cfg_attr(
-    feature = "neon",
-    feature(arm_target_feature, raw_ref_op)
-
-)]
+//#![cfg_attr(feature = "neon", feature(stdsimd))]
+//#![cfg_attr(
+//    feature = "neon",
+//    feature(arm_target_feature, raw_ref_op)
+//
+//)]
 
 /// These values match the Rendering Intent values from the ICC spec
 #[repr(C)]

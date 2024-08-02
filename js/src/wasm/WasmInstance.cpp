@@ -64,6 +64,7 @@
 #include "gc/StoreBuffer-inl.h"
 #include "vm/ArrayBufferObject-inl.h"
 #include "vm/JSObject-inl.h"
+#include "vm/NumberObject-inl.h"
 #include "wasm/WasmGcObject-inl.h"
 
 using namespace js;
@@ -246,6 +247,7 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
     JS::AutoAssertNoGC nogc;
     for (size_t i = 0; i < argc; i++) {
       const void* rawArgLoc = &argv[i];
+
       if (argTypes.isSyntheticStackResultPointerArg(i)) {
         stackResultPointer = Some(*(char**)rawArgLoc);
         continue;
@@ -261,8 +263,24 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
       if (!ToJSValue(cx, rawArgLoc, type, argValue)) {
         return false;
       }
+
+      //TODO(SAM): This is where we would like to the taint
+      //the input arguments, however, these values are
+      //expected to be primitive values and **not objects**.
+      //Could be related to #216.
+
+      double d;
+      if (ToNumber(cx, argValue, &d)){
+        JSObject* number = NumberObject::createTainted(
+            cx, d,
+            TaintFlow(
+              TaintOperation("WASM Import taint source", {taintarg(cx, d)})));
+        args[i].setObject(*number);
+      }
+
     }
-  }
+
+}
 
   // Visit arguments that need to perform allocation in a second loop
   // after the rest of arguments are converted.
@@ -283,6 +301,17 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
     if (!ToJSValue(cx, rawArgLoc, type, argValue)) {
       return false;
     }
+
+    //TODO(SAM): wont work, see above
+      double d;
+      if (ToNumber(cx, argValue, &d)){
+      JSObject* number = NumberObject::createTainted(
+          cx, d,
+          TaintFlow(
+            TaintOperation("WASM Import taint source", {taintarg(cx, d)})));
+      args[i].setObject(*number);
+    }
+
   }
 
   FuncImportInstanceData& import = funcImportInstanceData(fi);
@@ -292,6 +321,7 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
   RootedValue fval(cx, ObjectValue(*importCallable));
   RootedValue thisv(cx, UndefinedValue());
   RootedValue rval(cx);
+
   if (!Call(cx, fval, thisv, args, &rval)) {
     return false;
   }
@@ -2681,6 +2711,17 @@ bool wasm::ResultsToJSValue(JSContext* cx, ResultType type,
   MOZ_ASSERT((stackResultsLoc.isSome()) == (iter.count() > 1));
   if (!stackResultsLoc) {
     // A single result: we're done.
+
+    //TODO(SAM): see above
+    double d;
+    if (ToNumber(cx, rval, &d)) {
+      JSObject* number = NumberObject::createTainted(
+          cx, d,
+          TaintFlow(
+            TaintOperation("WASM Export taint source", {taintarg(cx, d)})));
+      rval.setObject(*number);
+    }
+
     return true;
   }
 
@@ -2706,6 +2747,21 @@ bool wasm::ResultsToJSValue(JSContext* cx, ResultType type,
       }
     }
   }
+
+  //TODO(SAM): see above
+  for (uint32_t i = 0; i < array->length(); i++) {
+    const auto* element = &array->getDenseElement(i);
+    if (!element->isNumber()) {
+      continue;
+    }
+
+    JSObject* number = NumberObject::createTainted(
+        cx, element->toNumber(),
+        TaintFlow(TaintOperation("WASM Export taint source",
+                                 {taintarg(cx, element->toNumber())})));
+    array->setDenseElement(i, ObjectValue(*number));
+  }
+
   rval.set(ObjectValue(*array));
   return true;
 }
@@ -2907,6 +2963,7 @@ bool Instance::callExport(JSContext* cx, uint32_t funcIndex, CallArgs args,
   if (!results.collect(cx, registerResultLoc, args.rval(), level)) {
     return false;
   }
+
   DebugCodegen(DebugChannel::Function, "]\n");
 
   return true;

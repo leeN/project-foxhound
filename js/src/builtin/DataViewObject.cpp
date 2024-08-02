@@ -64,6 +64,13 @@ DataViewObject* DataViewObject::create(
     return nullptr;
   }
 
+  obj->setReservedSlot(TAINT_SLOT, PrivateValue(nullptr));
+
+  if (arrayBuffer && arrayBuffer->isWasm()) {
+    obj->setTaint(
+        TaintFlow(TaintOperationFromContext(cx, "WASM Array taint source", true)));
+  }
+
   return obj;
 }
 
@@ -1017,6 +1024,7 @@ const JSPropertySpec DataViewObject::properties[] = {
     JS_PSG("buffer", DataViewObject::bufferGetter, 0),
     JS_PSG("byteLength", DataViewObject::byteLengthGetter, 0),
     JS_PSG("byteOffset", DataViewObject::byteOffsetGetter, 0),
+    JS_PSG("taint", js::Array_taintGetter, JSPROP_PERMANENT),
     JS_STRING_SYM_PS(toStringTag, "DataView", JSPROP_READONLY), JS_PS_END};
 
 JS_PUBLIC_API JSObject* JS_NewDataView(JSContext* cx, HandleObject buffer,
