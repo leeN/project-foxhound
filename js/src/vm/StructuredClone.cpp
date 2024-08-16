@@ -39,10 +39,12 @@
 #include "mozilla/ScopeExit.h"
 
 #include <algorithm>
+#include <iostream>
 #include <memory>
 #include <utility>
 
 #include "jsdate.h"
+#include "jstaint.h"
 
 #include "builtin/DataViewObject.h"
 #include "builtin/MapObject.h"
@@ -149,6 +151,8 @@ enum StructuredDataType : uint32_t {
   SCTAG_DATA_VIEW_OBJECT,
 
   SCTAG_ERROR_OBJECT,
+  SCTAG_TAINTED_STRING_OBJECT,
+  SCTAG_TAINTED_NUMBER_OBJECT,
 
   SCTAG_TYPED_ARRAY_V1_MIN = 0xFFFF0100,
   SCTAG_TYPED_ARRAY_V1_INT8 = SCTAG_TYPED_ARRAY_V1_MIN + Scalar::Int8,
@@ -1288,6 +1292,7 @@ bool JSStructuredCloneWriter::writeString(uint32_t tag, JSString* str) {
   // Need to add taint information to this serialization class
 
   JS::AutoCheckCannotGC nogc;
+  std::cout << "Unboxing string..\n";
   return linear->hasLatin1Chars()
              ? out.writeChars(linear->latin1Chars(nogc), length)
              : out.writeChars(linear->twoByteChars(nogc), length);
@@ -2023,13 +2028,29 @@ bool JSStructuredCloneWriter::writePrimitive(HandleValue v) {
 
 bool JSStructuredCloneWriter::startWrite(HandleValue v) {
   context()->check(v);
-
   if (v.isPrimitive()) {
     return writePrimitive(v);
   }
 
   if (!v.isObject()) {
     return reportDataCloneError(JS_SCERR_UNSUPPORTED_TYPE);
+  }
+
+  if(isTaintedNumber(v)) {
+      RootedValue rv(context(), v);
+      double d;
+      if(!ToNumber(context(), rv, &d)) {
+		      return false;
+		      }
+      TaintFlow tf(getNumberTaint(rv));
+      RootedObject taint_obj(context(), JS_NewObject(context(), nullptr));
+      if(!getTaintFlowObject(context(), tf, taint_obj)) {
+	      return false;
+      }
+      std::cout << "Writing tainted Number:: " << d << "\n";
+      RootedValue tfv(context(), JS::ObjectOrNullValue(taint_obj));
+      return out.writePair(SCTAG_TAINTED_NUMBER_OBJECT, 0) &&
+             out.writeDouble(d) && startWrite(tfv);
   }
 
   RootedObject obj(context(), &v.toObject());
@@ -2056,6 +2077,7 @@ bool JSStructuredCloneWriter::startWrite(HandleValue v) {
       if (!Unbox(context(), obj, &unboxed)) {
         return false;
       }
+      std::cout << "Unboxing number to write: " << unboxed.toNumber() << "...\n";
       return out.writePair(SCTAG_NUMBER_OBJECT, 0) &&
              out.writeDouble(unboxed.toNumber());
     }
@@ -2945,6 +2967,24 @@ bool JSStructuredCloneReader::startRead(MutableHandleValue vp,
       }
       break;
     }
+
+    case SCTAG_TAINTED_NUMBER_OBJECT: {
+      double d;
+      if (!in.readDouble(&d)) {
+        return false;
+      }
+      std::cout << "Read tainted num! Value: " << d << "..\n";
+      RootedValue flow(context());
+      if (!startRead(&flow)) {
+	      return false;
+      }
+      std::cout << "Read tainted num's flow.\n";
+  vp.setDouble(d);
+  return true;
+				      }
+
+
+	
 
     case SCTAG_BIGINT:
     case SCTAG_BIGINT_OBJECT: {
@@ -4132,6 +4172,7 @@ JS_PUBLIC_API bool JS_WriteBytes(JSStructuredCloneWriter* w, const void* p,
 
 JS_PUBLIC_API bool JS_WriteString(JSStructuredCloneWriter* w,
                                   HandleString str) {
+  std::cout << "Writing unboxed string,..\n";
   return w->writeString(SCTAG_STRING, str);
 }
 
