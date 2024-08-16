@@ -741,6 +741,11 @@ static bool Number(JSContext* cx, unsigned argc, Value* vp) {
   JSObject* obj;
   if (taint.hasTaint()) {
     obj = NumberObject::createTainted(cx, d, taint.begin()->flow());
+  } else if(args.length() > 0 && isTaintedNumber(args[0])) {
+    if(!ToNumber(cx, args[0], &d)) {
+      return false;
+    }
+    obj = NumberObject::createTainted(cx, d, getNumberTaint(args[0]));
   } else{
     // Default branch from original code
     obj = NumberObject::create(cx, d, proto);
