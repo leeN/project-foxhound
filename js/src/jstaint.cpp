@@ -637,3 +637,53 @@ void JS::TaintFoxReport(JSContext* cx, const char* msg)
 {
   JS_ReportWarningUTF8(cx, "%s", msg);
 }
+
+static std::u16string getU16Property(JSContext* cx, JS::Handle<JSObject*> obj, const char* name, bool* error) {
+  RootedValue val(cx);
+
+  if(!JS_GetProperty(cx, obj,name, &val)  && !val.isString()) {
+    *error=true;
+    return std::u16string();
+  }
+  return taintarg(cx, val, true);
+}
+
+TaintLocation JS::getLocationFromObject(JSContext* cx, JS::Handle<JSObject*> loc) {
+  bool error = false;
+  std::u16string filename = getU16Property(cx, loc, "filename", &error);
+  RootedValue line(cx);
+  RootedValue pos(cx);
+  RootedValue scriptStartLine(cx);
+  std::u16string function = getU16Property(cx, loc, "function", &error);
+
+  if(!JS_GetProperty(cx, loc, "line", &line) && !line.isNumber()) {
+    return TaintLocation();
+  }
+  uint32_t l = (uint32_t) line.toDouble();
+
+  if(!JS_GetProperty(cx, loc, "pos", &pos) && !pos.isNumber()) {
+    return TaintLocation();
+  }
+  uint32_t p = (uint32_t) pos.toDouble();
+
+  if(!JS_GetProperty(cx, loc, "scriptline", &scriptStartLine) && !scriptStartLine.isNumber()) {
+    return TaintLocation();
+  }
+  uint32_t scriptline = (uint32_t) scriptStartLine.toDouble();
+
+  return TaintLocation(filename, l, p, scriptline, TaintMd5(), function);
+}
+TaintOperation JS::getOperationFromObject(JSContext* cx, JS::Handle<JSObject*> op) {
+  RootedValue name(cx);
+  RootedValue args(cx);
+  RootedValue source(cx);
+  RootedValue location(cx);
+
+  if(!JS_GetProperty(cx, op, "name", &name) && !name.isString()) {
+    return TaintOperation("error");
+  }
+  RootedString rs(cx, name.toString());
+  UniqueChars op_str = JS_EncodeStringToUTF8(cx, rs);
+  return TaintOperation("error");
+}
+

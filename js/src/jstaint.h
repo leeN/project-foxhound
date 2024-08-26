@@ -127,6 +127,9 @@ bool getStringTaintObject(JSContext* cx, const StringTaint& taint, JS::Handle<JS
 // Print a message to stdout.
 void TaintFoxReport(JSContext* cx, const char* msg);
 
+TaintLocation getLocationFromObject(JSContext* cx, JS::Handle<JSObject*> loc);
+TaintOperation getOperationFromObject(JSContext* cx, JS::Handle<JSObject*> op);
+
 }
 
 #endif

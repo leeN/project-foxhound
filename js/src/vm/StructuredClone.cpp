@@ -2036,8 +2036,9 @@ bool JSStructuredCloneWriter::startWrite(HandleValue v) {
     return reportDataCloneError(JS_SCERR_UNSUPPORTED_TYPE);
   }
 
-  if(isTaintedNumber(v)) {
+ /* if(isTaintedNumber(v)) {
       RootedValue rv(context(), v);
+      RootedObject to(context(), JS_NewObject(context(), nullptr));
       double d;
       if(!ToNumber(context(), rv, &d)) {
 		      return false;
@@ -2047,11 +2048,12 @@ bool JSStructuredCloneWriter::startWrite(HandleValue v) {
       if(!getTaintFlowObject(context(), tf, taint_obj)) {
 	      return false;
       }
+      taint_obj->dump();
       std::cout << "Writing tainted Number:: " << d << "\n";
       RootedValue tfv(context(), JS::ObjectOrNullValue(taint_obj));
       return out.writePair(SCTAG_TAINTED_NUMBER_OBJECT, 0) &&
-             out.writeDouble(d) && startWrite(tfv);
-  }
+             out.writeDouble(d) && write(tfv);
+  }*/
 
   RootedObject obj(context(), &v.toObject());
 
@@ -2978,6 +2980,12 @@ bool JSStructuredCloneReader::startRead(MutableHandleValue vp,
       if (!startRead(&flow)) {
 	      return false;
       }
+      if(!flow.isObject()) {
+	      std::cout << "did not read an object..\n";
+      }
+
+      JSObject* o = flow.toObjectOrNull();
+      o->dump();
       std::cout << "Read tainted num's flow.\n";
   vp.setDouble(d);
   return true;
