@@ -343,6 +343,9 @@ void JS::MarkTaintedFunctionArguments(JSContext* cx, JSFunction* function, const
 {
   if (!function)
     return;
+  if(cx->runningWithTrustedPrincipals()) {
+    return;
+  }
 
   RootedValue name(cx);
 

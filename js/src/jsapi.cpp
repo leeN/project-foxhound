@@ -4894,6 +4894,9 @@ JS_GetStringTaint(const JSLinearString* str)
 JS_PUBLIC_API void
 JS_SetStringTaint(JSContext* cx, JSString* str, const StringTaint& taint)
 {
+  if(cx->runningWithTrustedPrincipals()) {
+    return;
+  }
   if (str) {
     str->setTaint(cx, taint);
   }
@@ -4902,6 +4905,9 @@ JS_SetStringTaint(JSContext* cx, JSString* str, const StringTaint& taint)
 JS_PUBLIC_API void
 JS_SetTaint(JSContext* cx, JS::MutableHandleValue value, const StringTaint& taint)
 {
+  if(cx->runningWithTrustedPrincipals()) {
+    return;
+  }
   if (value.isString()) {
     JS_SetStringTaint(cx, value.toString(), taint);
   }
@@ -4910,6 +4916,9 @@ JS_SetTaint(JSContext* cx, JS::MutableHandleValue value, const StringTaint& tain
 JS_PUBLIC_API void
 JS_MarkTaintSource(JSContext* cx, JSString* str, const TaintOperation& op)
 {
+  if(cx->runningWithTrustedPrincipals()) {
+    return;
+  }
   if (!str->isTainted()) {
     JS_SetStringTaint(cx, str, SafeStringTaint(0, str->length(), op));
   } else {
@@ -4920,6 +4929,9 @@ JS_MarkTaintSource(JSContext* cx, JSString* str, const TaintOperation& op)
 JS_PUBLIC_API void
 JS_MarkTaintSource(JSContext* cx, JS::MutableHandleValue value, const TaintOperation& op)
 {
+  if(cx->runningWithTrustedPrincipals()) {
+    return;
+  }
   if (value.isString()) {
     // If we have a string, set taint directly
     JS_MarkTaintSource(cx, value.toString(), op);

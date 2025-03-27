@@ -12,6 +12,7 @@
 #include <string>
 #include <utility>
 #include "jsfriendapi.h"
+#include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/dom/ToJSValue.h"
 #include "XPathGenerator.h"
 #include "nsContentUtils.h"
@@ -276,6 +277,8 @@ static nsresult MarkTaintSource(mozilla::dom::DOMString &str, TaintOperation ope
 nsresult MarkTaintSource(JSContext* cx, JSString* str, const char* name)
 {
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
     TaintOperation op = GetTaintOperation(cx, name);
     op.setSource();
     op.set_native();
@@ -287,6 +290,8 @@ nsresult MarkTaintSource(JSContext* cx, JSString* str, const char* name)
 nsresult MarkTaintSource(JSContext* cx, JS::MutableHandle<JS::Value> aValue, const char* name)
 {
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
     TaintOperation op = GetTaintOperation(cx, name);
     op.setSource();
     op.set_native();
@@ -298,6 +303,8 @@ nsresult MarkTaintSource(JSContext* cx, JS::MutableHandle<JS::Value> aValue, con
 nsresult MarkTaintSource(JSContext* cx, JS::MutableHandle<JS::Value> aValue, const char* name, const nsAString &arg)
 {
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
     TaintOperation op = GetTaintOperation(cx, name, arg);
     op.setSource();
     op.set_native();
@@ -309,6 +316,8 @@ nsresult MarkTaintSource(JSContext* cx, JS::MutableHandle<JS::Value> aValue, con
 nsresult MarkTaintSource(nsAString &str, const char* name)
 {
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
     return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name));
   }
   return NS_OK;
@@ -317,6 +326,8 @@ nsresult MarkTaintSource(nsAString &str, const char* name)
 nsresult MarkTaintSource(nsACString &str, const char* name)
 {
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
     return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name));
   }
   return NS_OK;
@@ -325,12 +336,16 @@ nsresult MarkTaintSource(nsACString &str, const char* name)
 nsresult MarkTaintSource(nsAString &str, const char* name, const nsAString &arg)
 {
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
     return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, arg));
   }
   return NS_OK;
 }
 
 static nsresult MarkTaintSource(TaintFlow &flow, TaintOperation operation) {
+  if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
   operation.setSource();
   operation.set_native();
   flow.extend(operation);
@@ -340,6 +355,8 @@ static nsresult MarkTaintSource(TaintFlow &flow, TaintOperation operation) {
 nsresult MarkTaintSource(TaintFlow &flow, const char* name, const nsAString &arg)
 {
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
     flow.extend(GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, arg));
   }
   return NS_OK;
@@ -348,6 +365,8 @@ nsresult MarkTaintSource(TaintFlow &flow, const char* name, const nsAString &arg
 nsresult MarkTaintSource(nsAString &str, const char* name, const nsTArray<nsString> &arg)
 {
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
     return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, arg));
   }
   return NS_OK;
@@ -356,6 +375,8 @@ nsresult MarkTaintSource(nsAString &str, const char* name, const nsTArray<nsStri
 nsresult MarkTaintSourceElement(nsAString &str, const char* name, const nsINode* node)
 {
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
     return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, node));
   }
   return NS_OK;
@@ -364,6 +385,8 @@ nsresult MarkTaintSourceElement(nsAString &str, const char* name, const nsINode*
 nsresult MarkTaintSource(mozilla::dom::DOMString &str, const char* name)
 {
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
     return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name));
   }
   return NS_OK;
@@ -372,6 +395,8 @@ nsresult MarkTaintSource(mozilla::dom::DOMString &str, const char* name)
 nsresult MarkTaintSource(mozilla::dom::DOMString &str, const char* name, const nsAString &arg)
 {
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
     return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, arg));
   }
   return NS_OK;
@@ -380,6 +405,8 @@ nsresult MarkTaintSource(mozilla::dom::DOMString &str, const char* name, const n
 nsresult MarkTaintSource(mozilla::dom::DOMString &str, const char* name, const nsTArray<nsString> &arg)
 {
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
     return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, arg));
   }
   return NS_OK;
@@ -388,6 +415,7 @@ nsresult MarkTaintSource(mozilla::dom::DOMString &str, const char* name, const n
 nsresult MarkTaintSourceElement(mozilla::dom::DOMString &str, const char* name, const nsINode* node)
 {
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
     return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, node));
   }
   return NS_OK;
@@ -404,6 +432,8 @@ nsresult MarkTaintSourceAttribute(nsAString &str, const char* name, const mozill
     }
   }
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
     return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, element, str, attr));
   }
   return NS_OK;
@@ -420,6 +450,8 @@ nsresult MarkTaintSourceAttribute(mozilla::dom::DOMString &str, const char* name
     }
   }
   if (isSourceActive(name)) {
+    if(nsContentUtils::LegacyIsCallerChromeOrNativeCode()) { return NS_OK; }
+
     nsAutoString nsStr;
     str.ToString(nsStr);
     return MarkTaintSource(str, GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, element, nsStr, attr));

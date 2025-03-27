@@ -6418,8 +6418,10 @@ void Document::GetReferrer(nsACString& aReferrer) const {
 
   URLDecorationStripper::StripTrackingIdentifiers(referrer, aReferrer);
 
-  // TaintFox: document.referrer taint source.
-  MarkTaintSource(aReferrer, "document.referrer");
+  if(!this->ChromeRulesEnabled()) {
+    // TaintFox: document.referrer taint source.
+    MarkTaintSource(aReferrer, "document.referrer");
+  }
 }
 
 void Document::GetCookie(nsAString& aCookie, ErrorResult& aRv) {

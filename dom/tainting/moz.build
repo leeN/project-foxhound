@@ -14,7 +14,8 @@ UNIFIED_SOURCES += [
 ]
 
 LOCAL_INCLUDES += [
-    "/dom/base",
+    "/dom/base"
+
 ]
 
 include("/ipc/chromium/chromium-config.mozbuild")

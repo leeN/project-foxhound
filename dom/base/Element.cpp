@@ -2847,18 +2847,20 @@ bool Element::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
 }
 
 void Element::SetTaintSourceGetAttr(const nsAString& aName, nsAString& aResult) const {
-  MarkTaintSourceAttribute(aResult, "element.attribute", this, aName);
-  return;
+  if(!this->NodePrincipal()->IsSystemPrincipal() && !this->NodePrincipal()->SchemeIs("about")) {
+    MarkTaintSourceAttribute(aResult, "element.attribute", this, aName);
+  }
 }
 
 void Element::SetTaintSourceGetAttr(const nsAString& aName, DOMString& aResult) const {
-  MarkTaintSourceAttribute(aResult, "element.attribute", this, aName);
-  return;
+  if(!this->NodePrincipal()->IsSystemPrincipal() && !this->NodePrincipal()->SchemeIs("about")) {
+    MarkTaintSourceAttribute(aResult, "element.attribute", this, aName);
+  }
 }
 
 void Element::SetTaintSourceGetAttr(const nsAtom* aName, nsAString& aResult) const {
   SetTaintSourceGetAttr(nsAtomString(aName), aResult);
-};
+}
 
 void Element::SetTaintSourceGetAttr(const nsAtom* aName, DOMString& aResult) const {
   SetTaintSourceGetAttr(nsAtomString(aName), aResult);
@@ -5189,7 +5191,9 @@ bool Element::Translate() const {
 
 void Element::TaintSelectorOperation(const char* operation, const nsAString& aElementId) {
   // Here we want to save a list of all selector operations performed on the element
-
+  if(this->NodePrincipal()->IsSystemPrincipal() && this->NodePrincipal()->SchemeIs("about")) {
+    return;
+  }
   // Check if there is a direct flow
   const StringTaint& aTaint = aElementId.Taint();
   TaintFlow flow;
