@@ -27,8 +27,9 @@
 #include "nsNetUtil.h"
 #include "nsVariant.h"
 #include "prprf.h"
+#include "taint/Taint.h"
 
-constexpr auto COOKIES_SCHEMA_VERSION = 16;
+constexpr auto COOKIES_SCHEMA_VERSION = 17;  // was 16
 
 // parameter indexes; see |Read|
 constexpr auto IDX_NAME = 0;
@@ -44,6 +45,7 @@ constexpr auto IDX_ORIGIN_ATTRIBUTES = 9;
 constexpr auto IDX_SAME_SITE = 10;
 constexpr auto IDX_SCHEME_MAP = 11;
 constexpr auto IDX_PARTITIONED_ATTRIBUTE_SET = 12;
+constexpr auto IDX_VALUE_TAINT = 13;
 
 #define COOKIES_FILE "cookies.sqlite"
 
@@ -106,6 +108,15 @@ void BindCookieParameters(mozIStorageBindingParamsArray* aParamsArray,
   rv = params->BindInt32ByName("isPartitionedAttributeSet"_ns,
                                aCookie->RawIsPartitioned());
   MOZ_ASSERT(NS_SUCCEEDED(rv));
+
+  // Foxhound: serialize cookie value taint for persistence
+  {
+    std::string serializedValueTaint =
+        SerializeStringTaint(aCookie->Value().Taint());
+    nsresult taintRv = params->BindUTF8StringByName(
+        "valueTaint"_ns, nsAutoCString(serializedValueTaint.c_str()));
+    MOZ_ASSERT(NS_SUCCEEDED(taintRv));
+  }
 
   // Bind the params to the array.
   rv = aParamsArray->AddParams(params);
@@ -1578,6 +1589,15 @@ CookiePersistentStorage::OpenDBResult CookiePersistentStorage::TryInitDB(
             nsLiteralCString("UPDATE moz_cookies SET expiry = expiry * 1000;"));
         NS_ENSURE_SUCCESS(rv, RESULT_RETRY);
 
+        [[fallthrough]];
+      }
+
+      case 16: {
+        // Foxhound: add valueTaint column for persisting cookie value taint
+        rv = mSyncConn->ExecuteSimpleSQL(
+            "ALTER TABLE moz_cookies ADD COLUMN valueTaint TEXT NOT NULL DEFAULT ''"_ns);
+        NS_ENSURE_SUCCESS(rv, RESULT_RETRY);
+
         // No more upgrades. Update the schema version.
         rv = mSyncConn->SetSchemaVersion(COOKIES_SCHEMA_VERSION);
         NS_ENSURE_SUCCESS(rv, RESULT_RETRY);
@@ -1847,7 +1867,8 @@ CookiePersistentStorage::OpenDBResult CookiePersistentStorage::Read() {
                                                   "originAttributes, "
                                                   "sameSite, "
                                                   "schemeMap, "
-                                                  "isPartitionedAttributeSet "
+                                                  "isPartitionedAttributeSet, "
+                                                  "valueTaint "
                                                   "FROM moz_cookies"),
                                  getter_AddRefs(stmt));
 
@@ -1931,10 +1952,19 @@ UniquePtr<CookieStruct> CookiePersistentStorage::GetCookieFromRow(
       0 != aRow->AsInt32(IDX_PARTITIONED_ATTRIBUTE_SET);
 
   // Create a new constCookie and assign the data.
-  return MakeUnique<CookieStruct>(
+  auto cs = MakeUnique<CookieStruct>(
       name, value, host, path, expiry, lastAccessed, creationTime, isHttpOnly,
       false, isSecure, isPartitionedAttributeSet, sameSite,
       static_cast<nsICookie::schemeType>(schemeMap));
+
+  // Foxhound: restore persisted taint on the cookie value
+  nsAutoCString valueTaintStr;
+  Unused << aRow->GetUTF8String(IDX_VALUE_TAINT, valueTaintStr);
+  if (!valueTaintStr.IsEmpty()) {
+    cs->value().AssignTaint(ParseStringTaint(std::string(valueTaintStr.get())));
+  }
+
+  return cs;
 }
 
 void CookiePersistentStorage::EnsureInitialized() {
@@ -2147,7 +2177,8 @@ nsresult CookiePersistentStorage::InitDBConnInternal() {
                        "isHttpOnly, "
                        "sameSite, "
                        "schemeMap, "
-                       "isPartitionedAttributeSet "
+                       "isPartitionedAttributeSet, "
+                       "valueTaint "
                        ") VALUES ("
                        ":originAttributes, "
                        ":name, "
@@ -2161,7 +2192,8 @@ nsresult CookiePersistentStorage::InitDBConnInternal() {
                        ":isHttpOnly, "
                        ":sameSite, "
                        ":schemeMap, "
-                       ":isPartitionedAttributeSet "
+                       ":isPartitionedAttributeSet, "
+                       ":valueTaint "
                        ")"),
       getter_AddRefs(mStmtInsert));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -2206,6 +2238,7 @@ nsresult CookiePersistentStorage::CreateTableWorker(const char* aName) {
       "sameSite INTEGER DEFAULT 0, "
       "schemeMap INTEGER DEFAULT 0, "
       "isPartitionedAttributeSet INTEGER DEFAULT 0, "
+      "valueTaint TEXT NOT NULL DEFAULT '', "
       "CONSTRAINT moz_uniqueid UNIQUE (name, host, path, originAttributes)"
       ")");
   return mSyncConn->ExecuteSimpleSQL(command);
