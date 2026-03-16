@@ -80,6 +80,10 @@ LOCAL_INCLUDES += [
     "/netwerk/protocol/http",
 ]
 
+USE_LIBS += [
+    "taint"
+]
+
 EXTRA_JS_MODULES += [
     "ThirdPartyCookieBlockingExceptionListService.sys.mjs",
 ]

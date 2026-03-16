@@ -27,7 +27,7 @@
 #include "nsNetUtil.h"
 #include "nsVariant.h"
 #include "prprf.h"
-#include "taint/Taint.h"
+#include "Taint.h"
 
 constexpr auto COOKIES_SCHEMA_VERSION = 17;  // was 16
 
