@@ -12,6 +12,7 @@
 #include "jslibmath.h"
 #include "jsmath.h"
 #include "jsnum.h"
+#include "jstaint.h"
 
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "util/CheckedArithmetic.h"
@@ -353,6 +354,12 @@ static MOZ_ALWAYS_INLINE bool GetObjectElementOperation(
   MOZ_ASSERT(op == JSOp::GetElem || op == JSOp::GetElemSuper);
   MOZ_ASSERT_IF(op == JSOp::GetElem, obj == &receiver.toObject());
 
+  // Foxhound: capture key taint before atomization loses it
+  SafeStringTaint keyTaint;
+  if (key.isString() && key.toString()->isTainted()) {
+    keyTaint = key.toString()->taint().safeCopy();
+  }
+
   do {
     uint32_t index;
     if (IsDefinitelyIndex(key, &index)) {
@@ -392,6 +399,32 @@ static MOZ_ALWAYS_INLINE bool GetObjectElementOperation(
     }
   } while (false);
 
+  // Foxhound: propagate tainted property key to result string.
+  // If the key was tainted, the value retrieved is influenced by attacker-
+  // controlled data, so it should inherit the key's taint.
+  if (keyTaint.hasTaint() && res.isString()) {
+    SafeStringTaint newTaint;
+    if (res.toString()->isTainted()) {
+      // Result is already tainted: preserve its existing taint and note the
+      // tainted key access in the taint flow.
+      newTaint = res.toString()->taint().safeCopy();
+    } else {
+      // Result is untainted: propagate the key's taint to the result.
+      newTaint = std::move(keyTaint);
+    }
+    newTaint.extend(TaintOperation("property_access", true));
+    // Create a fresh copy so we don't mutate the shared string stored in the
+    // object slot.
+    Rooted<JSString*> resStr(cx, res.toString());
+    JSLinearString* resLinear = resStr->ensureLinear(cx);
+    if (!resLinear) return false;
+    JSLinearString* resCopy =
+        NewDependentString(cx, resLinear, 0, resLinear->length());
+    if (!resCopy) return false;
+    resCopy->setTaint(cx, newTaint);
+    res.setString(resCopy);
+  }
+
   cx->debugOnlyCheck(res);
   return true;
 }
@@ -404,6 +437,12 @@ static MOZ_ALWAYS_INLINE bool GetPrimitiveElementOperation(
       cx, ToObjectFromStackForPropertyAccess(cx, receiver, receiverIndex, key));
   if (!boxed) {
     return false;
+  }
+
+  // Foxhound: capture key taint before atomization loses it
+  SafeStringTaint keyTaint;
+  if (key.isString() && key.toString()->isTainted()) {
+    keyTaint = key.toString()->taint().safeCopy();
   }
 
   do {
@@ -444,6 +483,25 @@ static MOZ_ALWAYS_INLINE bool GetPrimitiveElementOperation(
       return false;
     }
   } while (false);
+
+  // Foxhound: propagate tainted property key to result string.
+  if (keyTaint.hasTaint() && res.isString()) {
+    SafeStringTaint newTaint;
+    if (res.toString()->isTainted()) {
+      newTaint = res.toString()->taint().safeCopy();
+    } else {
+      newTaint = std::move(keyTaint);
+    }
+    newTaint.extend(TaintOperation("property_access", true));
+    Rooted<JSString*> resStr(cx, res.toString());
+    JSLinearString* resLinear = resStr->ensureLinear(cx);
+    if (!resLinear) return false;
+    JSLinearString* resCopy =
+        NewDependentString(cx, resLinear, 0, resLinear->length());
+    if (!resCopy) return false;
+    resCopy->setTaint(cx, newTaint);
+    res.setString(resCopy);
+  }
 
   cx->debugOnlyCheck(res);
   return true;

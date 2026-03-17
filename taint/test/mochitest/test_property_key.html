@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Test taint propagation through object property key access</title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css" />
+
+    <script type="text/javascript">
+      // Helper: check that opName appears somewhere in the taint flow of str.
+      function checkLastTaintOperation(str, opName) {
+        check_tainted(str);
+        const flow = str.taint[0].flow;
+        const hasOp = flow.some(node => node.operation === opName);
+        ok(hasOp,
+          `Expected "${opName}" in taint flow on "${str}". Flow: ${JSON.stringify(flow)}`);
+      }
+
+      // -------------------------------------------------------------------
+      // GetObjectElementOperation path  (obj[key])
+      // -------------------------------------------------------------------
+
+      add_task(async function test_untainted_key_untainted_value() {
+        // Baseline: untainted key, untainted value → result is untainted.
+        const obj = { hello: "world" };
+        const key = "hello";
+        const result = obj[key];
+        check_untainted(result);
+      });
+
+      add_task(async function test_untainted_key_tainted_value() {
+        // Untainted key, tainted value → result keeps its original taint,
+        // no property_access operation is added.
+        const taintedVal = String.tainted("world", "source1");
+        const obj = { hello: taintedVal };
+        const key = "hello";
+        const result = obj[key];
+        check_tainted(result);
+        // The taint flow should end with the original source, not property_access.
+        const lastOp = result.taint[0].flow.slice(-1)[0];
+        SimpleTest.is(lastOp.operation, "source1",
+          "Untainted key should not add property_access to the taint flow");
+      });
+
+      add_task(async function test_tainted_key_untainted_value() {
+        // Tainted key, untainted value string → result inherits key's taint
+        // and gets a property_access operation added to the flow.
+        const obj = { hello: "world" };
+        const key = String.tainted("hello", "attacker_key");
+        const result = obj[key];
+        check_tainted(result);
+        checkLastTaintOperation(result, "property_access");
+      });
+
+      add_task(async function test_tainted_key_tainted_value() {
+        // Tainted key, tainted value → result keeps the value's taint and
+        // a property_access operation is appended to the flow.
+        const taintedVal = String.tainted("world", "source_value");
+        const obj = { hello: taintedVal };
+        const key = String.tainted("hello", "attacker_key");
+        const result = obj[key];
+        check_tainted(result);
+        checkLastTaintOperation(result, "property_access");
+      });
+
+      add_task(async function test_tainted_key_non_string_value() {
+        // Tainted key, non-string value (number) → no taint propagation
+        // since taint only lives on strings.
+        const obj = { hello: 42 };
+        const key = String.tainted("hello", "attacker_key");
+        const result = obj[key];
+        SimpleTest.is(result, 42, "Value should still be retrieved correctly");
+        SimpleTest.is(typeof result, "number", "Result should be a number");
+      });
+
+      add_task(async function test_tainted_key_undefined_property() {
+        // Tainted key referencing a missing property → result is undefined,
+        // no crash.
+        const obj = {};
+        const key = String.tainted("missing", "attacker_key");
+        const result = obj[key];
+        SimpleTest.is(result, undefined, "Missing property should return undefined");
+      });
+
+      add_task(async function test_tainted_key_preserves_value() {
+        // The actual retrieved value should still be correct.
+        const obj = { hello: "world" };
+        const key = String.tainted("hello", "attacker_key");
+        const result = obj[key];
+        SimpleTest.is(result, "world", "Property value content should be unchanged");
+      });
+
+      add_task(async function test_tainted_key_source_preserved_in_flow() {
+        // The key's original source should appear somewhere in the taint flow
+        // of the result, so the full provenance chain is traceable.
+        const obj = { hello: "world" };
+        const key = String.tainted("hello", "attacker_key");
+        const result = obj[key];
+        check_tainted(result);
+        // Walk the flow looking for the source operation.
+        const flow = result.taint[0].flow;
+        const hasSource = flow.some(node => node.operation === "attacker_key");
+        ok(hasSource,
+          "Key's source operation should be present in the result's taint flow. Flow: " +
+          JSON.stringify(flow));
+      });
+
+      // -------------------------------------------------------------------
+      // GetPrimitiveElementOperation path  (primitive[key])
+      // -------------------------------------------------------------------
+
+      add_task(async function test_tainted_key_on_string_prototype() {
+        // Accessing a String.prototype method via tainted key on a string
+        // primitive.  The result is a function (not a string), so no taint
+        // propagation, but the access must not crash.
+        const str = "hello";
+        const key = String.tainted("length", "attacker_key");
+        const result = str[key];
+        SimpleTest.is(result, 5, "String length should be retrieved correctly");
+      });
+
+      add_task(async function test_tainted_key_on_string_property() {
+        // String.prototype properties accessed via tainted key where the
+        // result IS a string (via String wrapper object property that is
+        // itself a tainted string stored as an expando).
+        const strObj = new String("base");
+        strObj.extra = "extra_value";
+        const key = String.tainted("extra", "attacker_key");
+        const result = strObj[key];
+        check_tainted(result);
+        checkLastTaintOperation(result, "property_access");
+      });
+
+      // -------------------------------------------------------------------
+      // Repeated access — taint should be consistent across accesses
+      // -------------------------------------------------------------------
+
+      add_task(async function test_repeated_access_with_tainted_key() {
+        const obj = { hello: "world" };
+        const key = String.tainted("hello", "attacker_key");
+
+        const r1 = obj[key];
+        const r2 = obj[key];
+
+        check_tainted(r1);
+        check_tainted(r2);
+        // Both results should be tainted with property_access.
+        checkLastTaintOperation(r1, "property_access");
+        checkLastTaintOperation(r2, "property_access");
+        // Original object slot should not have been mutated.
+        check_untainted(obj.hello);
+      });
+
+      add_task(async function test_original_slot_not_mutated() {
+        // Accessing with a tainted key must not mutate the string stored in
+        // the object slot — subsequent untainted accesses should see the
+        // original taint state.
+        const obj = { hello: "world" };
+        const taintedKey = String.tainted("hello", "attacker_key");
+
+        obj[taintedKey]; // tainted access
+        const result = obj["hello"]; // plain access
+        check_untainted(result);
+      });
+
+    </script>
+  </head>
+  <body></body>
+</html>
