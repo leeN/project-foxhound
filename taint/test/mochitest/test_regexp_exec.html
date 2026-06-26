@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>
+      Check that the RegExp.prototype.exec taint operation records both the
+      regular expression body and its flags
+    </title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css" />
+
+    <script type="text/javascript">
+      // Returns the last "RegExp.prototype.exec" operation in the taint flow of
+      // the given tainted string, or undefined if there is none.
+      function getExecOperation(str) {
+        return str.taint[0].flow.find(
+          (op) => op.operation === "RegExp.prototype.exec"
+        );
+      }
+
+      // Returns every "RegExp.prototype.exec" operation in the taint flow.
+      function getExecOperations(str) {
+        return str.taint[0].flow.filter(
+          (op) => op.operation === "RegExp.prototype.exec"
+        );
+      }
+
+      function execAndGetOperation(regexp, input) {
+        const match = regexp.exec(input);
+        SimpleTest.ok(match, "Regular expression " + regexp + " matched");
+        check_tainted(match[0]);
+        const op = getExecOperation(match[0]);
+        SimpleTest.ok(op, "Found RegExp.prototype.exec operation in taint flow");
+        return op;
+      }
+
+      add_task(function test_exec_records_body_and_flags() {
+        const input = String.tainted("hello world", "src");
+        const op = execAndGetOperation(/\w+/g, input);
+
+        SimpleTest.is(op.arguments[0], "\\w+", "Operation records regex body");
+        SimpleTest.is(op.arguments[1], "g", "Operation records regex flags");
+      });
+
+      add_task(function test_exec_records_no_flags() {
+        const input = String.tainted("hello world", "src");
+        const op = execAndGetOperation(/\w+/, input);
+
+        SimpleTest.is(op.arguments[0], "\\w+", "Operation records regex body");
+        SimpleTest.is(
+          op.arguments[1],
+          "",
+          "Operation records empty flags when none are set"
+        );
+      });
+
+      add_task(function test_exec_records_flags_in_canonical_order() {
+        const input = String.tainted("hello world", "src");
+        // Flags supplied out of order; they must be recorded as "gi".
+        const op = execAndGetOperation(/\w+/gi, input);
+
+        SimpleTest.is(
+          op.arguments[1],
+          "gi",
+          "Operation records flags in canonical order"
+        );
+      });
+
+      // Every flag has to show up, in the order used by RegExp.prototype.flags.
+      // 'u' and 'v' are mutually exclusive, so they get one case each.
+      add_task(function test_exec_records_every_flag() {
+        const cases = [
+          [/\w+/d, "d"],
+          [/\w+/g, "g"],
+          [/\w+/i, "i"],
+          [/\w+/m, "m"],
+          [/\w+/s, "s"],
+          [/\w+/u, "u"],
+          [/\w+/v, "v"],
+          [/\w+/y, "y"],
+          [/\w+/dgimsuy, "dgimsuy"],
+          [/\w+/dgimsvy, "dgimsvy"],
+        ];
+
+        for (const [regexp, expected] of cases) {
+          const input = String.tainted("hello world", "src");
+          const op = execAndGetOperation(regexp, input);
+          SimpleTest.is(
+            op.arguments[1],
+            expected,
+            "Operation records flags '" + expected + "' for " + regexp
+          );
+        }
+      });
+
+      // The recorded body/flags pair must be enough to rebuild the regexp.
+      add_task(function test_recorded_operation_reconstructs_regexp() {
+        const cases = [
+          [/a\/b/gi, "a/b"],
+          [/^\w+$/dmsy, "abc"],
+          [/[\p{Letter}]+/gu, "abc"],
+        ];
+
+        for (const [regexp, text] of cases) {
+          const input = String.tainted(text, "src");
+          const match = regexp.exec(input);
+          SimpleTest.ok(match, "Regular expression " + regexp + " matched");
+          const op = getExecOperation(match[0]);
+          SimpleTest.ok(op, "Found RegExp.prototype.exec operation");
+          const rebuilt = new RegExp(op.arguments[0], op.arguments[1]);
+          SimpleTest.is(
+            rebuilt.source,
+            regexp.source,
+            "Recorded body rebuilds the same source"
+          );
+          SimpleTest.is(
+            rebuilt.flags,
+            regexp.flags,
+            "Recorded flags rebuild the same flags"
+          );
+        }
+      });
+
+      // Slashes and line terminators are escaped by EscapeRegExpPattern, so the
+      // recorded body has to match RegExp.prototype.source rather than the raw
+      // pattern text.
+      add_task(function test_exec_records_escaped_body() {
+        const input = String.tainted("a/b", "src");
+        const op = execAndGetOperation(new RegExp("a/b"), input);
+
+        SimpleTest.is(
+          op.arguments[0],
+          "a\\/b",
+          "Operation records the escaped regex source"
+        );
+      });
+
+      // Each capture group produces its own operation carrying the same body
+      // and flags plus the matched substring and the pair index.
+      add_task(function test_exec_records_capture_groups() {
+        const input = String.tainted("hello world", "src");
+        const match = /(\w+) (\w+)/g.exec(input);
+
+        check_tainted(match[0]);
+        check_tainted(match[1]);
+        check_tainted(match[2]);
+
+        const expected = [
+          ["hello world", "0"],
+          ["hello", "1"],
+          ["world", "2"],
+        ];
+
+        for (let i = 0; i < expected.length; i++) {
+          const op = getExecOperation(match[i]);
+          SimpleTest.ok(op, "Found operation for match[" + i + "]");
+          SimpleTest.is(
+            op.arguments[0],
+            "(\\w+) (\\w+)",
+            "Group " + i + " records regex body"
+          );
+          SimpleTest.is(op.arguments[1], "g", "Group " + i + " records flags");
+          SimpleTest.is(
+            op.arguments[2],
+            expected[i][0],
+            "Group " + i + " records the matched substring"
+          );
+          SimpleTest.is(
+            op.arguments[3],
+            expected[i][1],
+            "Group " + i + " records the pair index"
+          );
+        }
+      });
+
+      // String.prototype.match goes through the same code path.
+      add_task(function test_match_records_body_and_flags() {
+        const input = String.tainted("hello world", "src");
+        const match = input.match(/\w+/i);
+
+        check_tainted(match[0]);
+        const op = getExecOperation(match[0]);
+        SimpleTest.ok(op, "Found RegExp.prototype.exec operation for match()");
+        SimpleTest.is(op.arguments[0], "\\w+", "match() records regex body");
+        SimpleTest.is(op.arguments[1], "i", "match() records regex flags");
+      });
+
+      add_task(function test_matchall_records_body_and_flags() {
+        const input = String.tainted("hello world", "src");
+        const matches = Array.from(input.matchAll(/\w+/g));
+
+        SimpleTest.is(matches.length, 2, "matchAll found both words");
+        for (const match of matches) {
+          check_tainted(match[0]);
+          const op = getExecOperation(match[0]);
+          SimpleTest.ok(op, "Found operation for matchAll result " + match[0]);
+          SimpleTest.is(
+            op.arguments[1],
+            "g",
+            "matchAll records regex flags for " + match[0]
+          );
+        }
+      });
+
+      // Repeated exec() calls stack operations, each with its own flags.
+      add_task(function test_repeated_exec_stacks_operations() {
+        const input = String.tainted("hello world", "src");
+        const first = /\w+/g.exec(input)[0];
+        const second = /l+/i.exec(first)[0];
+
+        check_tainted(second);
+        const ops = getExecOperations(second);
+        SimpleTest.is(ops.length, 2, "Both exec operations are in the flow");
+        SimpleTest.is(ops[0].arguments[0], "l+", "Newest operation is first");
+        SimpleTest.is(ops[0].arguments[1], "i", "Newest operation flags");
+        SimpleTest.is(ops[1].arguments[0], "\\w+", "Oldest operation body");
+        SimpleTest.is(ops[1].arguments[1], "g", "Oldest operation flags");
+      });
+
+      // An untainted input must not gain taint from a match.
+      add_task(function test_untainted_input_stays_untainted() {
+        const match = /\w+/g.exec("hello world");
+        check_untainted(match[0]);
+      });
+    </script>
+  </head>
+
+  <body></body>
+</html>
