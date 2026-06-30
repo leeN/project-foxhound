@@ -3863,12 +3863,16 @@ bool Element::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
 }
 
 void Element::SetTaintSourceGetAttr(const nsAString& aName, nsAString& aResult) const {
-  MarkTaintSourceAttribute(aResult, "element.attribute", this, aName);
+  if (!nsContentUtils::IsChromeDoc(OwnerDoc())) {
+    MarkTaintSourceAttribute(aResult, "element.attribute", this, aName);
+  }
   return;
 }
 
 void Element::SetTaintSourceGetAttr(const nsAString& aName, DOMString& aResult) const {
-  MarkTaintSourceAttribute(aResult, "element.attribute", this, aName);
+  if (!nsContentUtils::IsChromeDoc(OwnerDoc())) {
+    MarkTaintSourceAttribute(aResult, "element.attribute", this, aName);
+  }
   return;
 }
 
@@ -6266,6 +6270,9 @@ bool Element::Translate() const {
 }
 
 void Element::TaintSelectorOperation(const char* operation, const nsAString& aElementId) {
+  if (nsContentUtils::IsChromeDoc(OwnerDoc())) {
+    return;
+  }
   // Here we want to save a list of all selector operations performed on the element
 
   // Check if there is a direct flow
