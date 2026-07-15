@@ -10,6 +10,7 @@
 #include "nsString.h"
 #include "nsUnicharUtils.h"  // for nsCaseInsensitiveStringComparator
 #include "mozilla/LinkedList.h"
+#include "Taint.h"  // Foxhound: taint tracking for scanner buffers
 #include <algorithm>
 
 /**
@@ -79,11 +80,19 @@ class nsScannerBufferList {
     uint32_t DataLength() const { return mDataEnd - DataStart(); }
     void SetDataLength(uint32_t len) { mDataEnd = DataStart() + len; }
 
+    // Foxhound: taint information for the characters stored in this buffer.
+    // The taint is indexed relative to DataStart().
+    const StringTaint& Taint() const { return mTaint; }
+    StringTaint& Taint() { return mTaint; }
+    void SetTaint(const StringTaint& aTaint) { mTaint = aTaint; }
+
    private:
     friend class nsScannerBufferList;
 
     int32_t mUsageCount;
     char16_t* mDataEnd;
+    // Foxhound: taint for the buffer's data (owned; cleared on destruction).
+    SafeStringTaint mTaint;
   };
 
   /**

@@ -173,6 +173,11 @@ nsresult nsXMLContentSerializer::AppendTextData(nsIContent* aNode,
       return NS_ERROR_OUT_OF_MEMORY;
     }
     if (aTranslateEntities) {
+      // Foxhound: carry the fragment's taint on the temporary UTF-16 string so
+      // AppendAndTranslateEntities propagates it (with correct entity offset
+      // handling). Without this, taint on single-byte (ASCII) text fragments
+      // was dropped during XML serialization.
+      utf16.AssignTaint(frag->Taint().safeSubTaint(aStartOffset, endoffset));
       NS_ENSURE_TRUE(AppendAndTranslateEntities(utf16, aStr),
                      NS_ERROR_OUT_OF_MEMORY);
     } else {

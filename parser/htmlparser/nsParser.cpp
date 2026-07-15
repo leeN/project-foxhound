@@ -12,6 +12,7 @@
 #include "plstr.h"
 #include "nsIChannel.h"
 #include "nsIInputStream.h"
+#include "nsITaintawareInputStream.h"
 #include "CNavDTD.h"
 #include "prenv.h"
 #include "prlock.h"
@@ -939,16 +940,14 @@ typedef struct {
 } ParserWriteStruct;
 
 /*
- * This function is invoked as a result of a call to a stream's
- * ReadSegments() method. It is called for each contiguous buffer
- * of data in the underlying stream or pipe. Using ReadSegments
- * allows us to avoid copying data to read out of the stream.
+ * Shared implementation for the (taint-aware and plain) parser write
+ * functions. Performs charset sniffing and appends the segment (with any
+ * taint) to the scanner.
  */
-static nsresult ParserWriteFunc(nsIInputStream* in, void* closure,
-                                const char* fromRawSegment, uint32_t toOffset,
-                                uint32_t count, uint32_t* writeCount) {
+static nsresult DoParserWrite(ParserWriteStruct* pws, const char* fromRawSegment,
+                              uint32_t count, const StringTaint& aTaint,
+                              uint32_t* writeCount) {
   nsresult result;
-  ParserWriteStruct* pws = static_cast<ParserWriteStruct*>(closure);
   const unsigned char* buf =
       reinterpret_cast<const unsigned char*>(fromRawSegment);
   uint32_t theNumRead = count;
@@ -988,12 +987,40 @@ static nsresult ParserWriteFunc(nsIInputStream* in, void* closure,
     pws->mParser->SetSinkCharset(preferred);
   }
 
-  result = pws->mScanner->Append(fromRawSegment, theNumRead);
+  // Foxhound: forward the taint information along with the raw bytes.
+  result = pws->mScanner->Append(fromRawSegment, theNumRead, aTaint);
   if (NS_SUCCEEDED(result)) {
     *writeCount = count;
   }
 
   return result;
+}
+
+/*
+ * This function is invoked as a result of a call to a stream's
+ * ReadSegments() method. It is called for each contiguous buffer
+ * of data in the underlying stream or pipe. Using ReadSegments
+ * allows us to avoid copying data to read out of the stream.
+ */
+static nsresult ParserWriteFunc(nsIInputStream* in, void* closure,
+                                const char* fromRawSegment, uint32_t toOffset,
+                                uint32_t count, uint32_t* writeCount) {
+  ParserWriteStruct* pws = static_cast<ParserWriteStruct*>(closure);
+  return DoParserWrite(pws, fromRawSegment, count, EmptyTaint, writeCount);
+}
+
+/*
+ * Foxhound: taint-aware variant of ParserWriteFunc, invoked from
+ * nsITaintawareInputStream::TaintedReadSegments so that taint information is
+ * preserved when feeding data to the scanner.
+ */
+static nsresult ParserWriteFuncTainted(nsITaintawareInputStream* in,
+                                       void* closure, const char* fromRawSegment,
+                                       uint32_t toOffset, uint32_t count,
+                                       const StringTaint& aTaint,
+                                       uint32_t* writeCount) {
+  ParserWriteStruct* pws = static_cast<ParserWriteStruct*>(closure);
+  return DoParserWrite(pws, fromRawSegment, count, aTaint, writeCount);
 }
 
 nsresult nsParser::OnDataAvailable(nsIRequest* request,
@@ -1033,7 +1060,17 @@ nsresult nsParser::OnDataAvailable(nsIRequest* request,
     pws.mScanner = &mParserContext->mScanner;
     pws.mRequest = request;
 
-    rv = pIStream->ReadSegments(ParserWriteFunc, &pws, aLength, &totalRead);
+    // Foxhound: if the stream can provide taint information, use the taint-aware
+    // read path so that taint is propagated into the scanner (and eventually
+    // into the parsed DOM). Otherwise fall back to the plain read path.
+    nsCOMPtr<nsITaintawareInputStream> taintInputStream(
+        do_QueryInterface(pIStream));
+    if (taintInputStream) {
+      rv = taintInputStream->TaintedReadSegments(ParserWriteFuncTainted, &pws,
+                                                 aLength, &totalRead);
+    } else {
+      rv = pIStream->ReadSegments(ParserWriteFunc, &pws, aLength, &totalRead);
+    }
     if (NS_FAILED(rv)) {
       return rv;
     }

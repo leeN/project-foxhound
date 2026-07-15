@@ -6,13 +6,23 @@
 #include "nsISupports.idl"
 interface nsIScriptError;
 
+%{C++
+#include "Taint.h"
+%}
+
+// Foxhound: allow passing taint information alongside character data.
+native StringTaint(StringTaint);
+// Foxhound: a C array of (const StringTaint*), one entry per element in the
+// attribute array (the entry at 2*k+1 holds the taint for the k-th value).
+native StringTaintArray(const StringTaint**);
+
 /**
  * This interface should be implemented by any content sink that wants
  * to get output from expat and do something with it; in other words,
  * by any sink that handles some sort of XML dialect.
  */
 
-[scriptable, uuid(01f681af-0f22-4725-a914-0d396114daf0)]
+[scriptable, builtinclass, uuid(01f681af-0f22-4725-a914-0d396114daf0)]
 interface nsIExpatSink : nsISupports
 {
   /**
@@ -38,6 +48,20 @@ interface nsIExpatSink : nsISupports
                           in unsigned long aColumnNumber);
 
   /**
+   * Foxhound: Called to handle the opening tag of an element along with taint
+   * information for the attribute values. aAttsTaint is a C array parallel to
+   * aAtts (aAttsCount entries); aAttsTaint[2*k+1] holds the taint (may be null)
+   * for the value aAtts[2*k+1].
+   */
+  [noscript] void HandleStartElementWithTaint(
+      in wstring aName,
+      [array, size_is(aAttsCount)] in wstring aAtts,
+      in unsigned long aAttsCount,
+      in unsigned long aLineNumber,
+      in unsigned long aColumnNumber,
+      in StringTaintArray aAttsTaint);
+
+  /**
    * Called to handle the closing tag of an element.
    * @param aName the fully qualified tagname of the element
    */
@@ -51,12 +75,25 @@ interface nsIExpatSink : nsISupports
   void HandleComment(in wstring aCommentText);
 
   /**
+   * Foxhound: Called to handle a comment along with taint information.
+   */
+  [noscript] void HandleCommentWithTaint(in wstring aCommentText,
+                                         [const] inout StringTaint aTaint);
+
+  /**
    * Called to handle a CDATA section
    * @param aData the text in the CDATA section.  This is null-terminated.
    * @param aLength the length of the aData string
    */
   void HandleCDataSection([size_is(aLength)] in wstring aData,
                           in unsigned long aLength);
+
+  /**
+   * Foxhound: Called to handle a CDATA section along with taint information.
+   */
+  [noscript] void HandleCDataSectionWithTaint([size_is(aLength)] in wstring aData,
+                                              in unsigned long aLength,
+                                              [const] inout StringTaint aTaint);
 
   /**
    * Called to handle the doctype declaration
@@ -75,6 +112,18 @@ interface nsIExpatSink : nsISupports
    */
   void HandleCharacterData([size_is(aLength)] in wstring aData,
                            in unsigned long aLength);
+
+  /**
+   * Foxhound: Called to handle character data along with taint information for
+   * the data. Behaves like HandleCharacterData but also propagates taint.
+   * @param aData the data to handle.  aData is NOT NULL-TERMINATED.
+   * @param aLength the length of the aData string
+   * @param aTaint taint information for aData (indexed from 0)
+   */
+  [noscript] void HandleCharacterDataWithTaint(
+      [size_is(aLength)] in wstring aData,
+      in unsigned long aLength,
+      [const] inout StringTaint aTaint);
 
   /**
    * Called to handle a processing instruction

@@ -112,7 +112,8 @@ class nsExpatDriver : public nsIDTD {
    */
   void ParseChunk(const char16_t* aBuffer, uint32_t aLength,
                   ChunkOrBufferIsFinal aIsFinal, uint32_t* aConsumed,
-                  XML_Size* aLastLineLength);
+                  XML_Size* aLastLineLength,
+                  const StringTaint& aChunkTaint = EmptyTaint);
   /**
    * Wrapper for ParseBuffer. If the buffer is too large to be copied into the
    * sandbox all at once, splits it into chunks and invokes ParseBuffer in a
@@ -132,7 +133,8 @@ class nsExpatDriver : public nsIDTD {
    */
   void ChunkAndParseBuffer(const char16_t* aBuffer, uint32_t aLength,
                            bool aIsFinal, uint32_t* aPassedToExpat,
-                           uint32_t* aConsumed, XML_Size* aLastLineLength);
+                           uint32_t* aConsumed, XML_Size* aLastLineLength,
+                           const StringTaint& aBufferTaint = EmptyTaint);
 
   nsresult HandleError();
 
@@ -182,6 +184,29 @@ class nsExpatDriver : public nsIDTD {
 
   nsString mLastLine;
   nsString mCDataText;
+
+  // Foxhound: Expat runs inside an RLBox sandbox, so taint cannot be carried
+  // through the sandbox. Instead we accumulate the taint of every char16_t we
+  // feed to Expat (keyed by cumulative char offset, matching Expat's byte
+  // index) and re-associate it with emitted character data using
+  // XML_GetCurrentByteIndex.
+  SafeStringTaint mExpatInputTaint;
+  uint32_t mExpatInputCharCount = 0;
+
+  // Foxhound: a copy of the char16_t input fed to Expat, kept only once taint
+  // has been seen (indexed from mExpatInputTextBase). Used to locate attribute
+  // values in the source so their taint can be recovered (Expat does not report
+  // per-attribute byte offsets).
+  nsString mExpatInputText;
+  uint32_t mExpatInputTextBase = 0;
+  bool mExpatInputTextStarted = false;
+
+  // Foxhound: compute the taint for each attribute value by locating it in the
+  // buffered source of the current start tag. aTaints is sized to aAttsCount;
+  // aTaints[2*k+1] receives the taint (possibly empty) for value aAtts[2*k+1].
+  void ComputeAttrValueTaints(const char16_t** aAtts, uint32_t aAttsCount,
+                              int64_t aTagByteIndex,
+                              nsTArray<SafeStringTaint>& aTaints);
   // Various parts of a doctype
   nsString mDoctypeName;
   nsString mSystemID;

@@ -106,8 +106,10 @@ class nsXMLContentSink : public nsContentSink,
   virtual void MaybeStartLayout(bool aIgnorePendingSheets);
 
   virtual nsresult AddAttributes(const char16_t** aNode,
-                                 mozilla::dom::Element* aElement);
-  nsresult AddText(const char16_t* aString, int32_t aLength);
+                                 mozilla::dom::Element* aElement,
+                                 const StringTaint** aAttsTaint = nullptr);
+  nsresult AddText(const char16_t* aString, int32_t aLength,
+                   const StringTaint& aTaint = EmptyTaint);
 
   virtual bool OnOpenContainer(const char16_t** aAtts, uint32_t aAttsCount,
                                int32_t aNameSpaceID, nsAtom* aTagName,
@@ -179,10 +181,12 @@ class nsXMLContentSink : public nsContentSink,
 
   nsresult HandleStartElement(const char16_t* aName, const char16_t** aAtts,
                               uint32_t aAttsCount, uint32_t aLineNumber,
-                              uint32_t aColumnNumber, bool aInterruptable);
+                              uint32_t aColumnNumber, bool aInterruptable,
+                              const StringTaint** aAttsTaint = nullptr);
   nsresult HandleEndElement(const char16_t* aName, bool aInterruptable);
   nsresult HandleCharacterData(const char16_t* aData, uint32_t aLength,
-                               bool aInterruptable);
+                               bool aInterruptable,
+                               const StringTaint& aTaint = EmptyTaint);
 
   nsCOMPtr<nsIContent> mDocElement;
   nsCOMPtr<nsIContent> mCurrentHead;  // When set, we're in an XHTML <haed>
@@ -191,6 +195,10 @@ class nsXMLContentSink : public nsContentSink,
 
   // The length of the valid data in mText.
   int32_t mTextLength;
+
+  // Foxhound: taint for the characters currently accumulated in mText, indexed
+  // from 0 (the start of mText). Flushed and cleared alongside mText.
+  SafeStringTaint mTextTaint;
 
   int32_t mNotifyLevel;
   RefPtr<nsTextNode> mLastTextNode;

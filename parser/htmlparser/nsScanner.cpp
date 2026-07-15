@@ -187,7 +187,8 @@ nsresult nsScanner::Append(const nsAString& aBuffer) {
  *  @param
  *  @return
  */
-nsresult nsScanner::Append(const char* aBuffer, uint32_t aLen) {
+nsresult nsScanner::Append(const char* aBuffer, uint32_t aLen,
+                           const StringTaint& aTaint) {
   nsresult res = NS_OK;
   if (mUnicodeDecoder) {
     mozilla::CheckedInt<size_t> needed =
@@ -226,6 +227,14 @@ nsresult nsScanner::Append(const char* aBuffer, uint32_t aLen) {
       unichars[written++] = 0xFFFF;
     }
     buffer->SetDataLength(written);
+    // Foxhound: propagate the taint of the raw bytes onto the decoded
+    // characters. Taint offsets are byte offsets in aBuffer; for single-byte
+    // encodings (e.g. ASCII/UTF-8 of ASCII text) these coincide with the
+    // decoded character offsets. For multi-byte sequences this is a best
+    // effort mapping.
+    if (aTaint.hasTaint()) {
+      buffer->SetTaint(aTaint.safeSubTaint(0, written));
+    }
     // Don't propagate return code of unicode decoder
     // since it doesn't reflect on our success or failure
     // - Ref. bug 87110

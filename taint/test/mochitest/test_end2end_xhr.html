@@ -11,7 +11,7 @@
   </body>
       <script>
         let responses = 0;
-        let total_tests = 10;
+        let total_tests = 15;
       SimpleTest.waitForExplicitFinish();
 
       function runTest(method) {
@@ -77,6 +77,31 @@
 
         }
 
+        // Verifies taint propagation for XML attribute values, comments and
+        // CDATA sections.
+        function runTestXMLRich(method) {
+            SimpleTest.info(`Test: ${method}`);
+            let request = new XMLHttpRequest();
+            request.onload = async () => {
+                let resp = request.responseXML;
+                let root = resp.documentElement;
+                // Attribute value taint
+                check_tainted(root.getAttribute("id"));
+                // Comment node taint (first child of <r>)
+                let comment = root.childNodes[0];
+                check_tainted(comment.data);
+                // CDATA section taint
+                let cdata = resp.getElementsByTagName("c")[0].firstChild;
+                check_tainted(cdata.data);
+                responses += 3;
+                if(responses == total_tests) {
+                  SimpleTest.finish();
+                }
+            };
+            request.open("GET", `http://mochi.test:8888/tests/taint/test/mochitest/xhr_server.sjs?${method}`, true);
+            request.send("");
+        }
+
         function runTestSync(method) {
           SimpleTest.info(`Test: ${method}`);
             let request = new XMLHttpRequest();
@@ -100,14 +125,16 @@
          runTest("e2e-html");
          // The XML tests currently fail due to usage of an external XML Parser
          // See e.g. nsParser.cpp and nsExpatDriver.cpp
-         // runTestXML("e2e-xml");
-         // runTestXML("e2e-partial-xml");
+         runTestXML("e2e-xml");
+         runTestXML("e2e-partial-xml");
          runTestSync("e2e");
          runTest("e2e-partial");
          runTestSync("e2e-partial-html");
          runTestSync("e2e-html");
          runTestHTML("e2e-html");
          runTestHTML("e2e-partial-html");
+         // Attribute values, comments and CDATA (3 checks).
+         runTestXMLRich("e2e-xml-rich");
 
     </script>
 </html>

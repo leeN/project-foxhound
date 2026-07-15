@@ -112,7 +112,8 @@ class nsScanner final {
    *  @param
    *  @return
    */
-  nsresult Append(const char* aBuffer, uint32_t aLen);
+  nsresult Append(const char* aBuffer, uint32_t aLen,
+                  const StringTaint& aTaint = EmptyTaint);
 
   /**
    *  Call this to copy bytes out of the scanner that have not yet been consumed

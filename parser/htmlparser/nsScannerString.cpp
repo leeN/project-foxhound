@@ -24,6 +24,8 @@ nsScannerBufferList::Buffer* nsScannerBufferList::AllocBufferFromString(
     nsAString::const_iterator source;
     aString.BeginReading(source);
     nsCharTraits<char16_t>::copy(buf->DataStart(), source.get(), len);
+    // Foxhound: preserve the taint information of the source string.
+    buf->SetTaint(aString.Taint());
   }
   return buf;
 }
@@ -50,6 +52,9 @@ void nsScannerBufferList::ReleaseAll() {
   while (!mBuffers.isEmpty()) {
     Buffer* node = mBuffers.popFirst();
     // printf(">>> freeing buffer @%p\n", node);
+    // Foxhound: Buffer holds a SafeStringTaint that must be destructed since
+    // the memory was allocated with malloc and is released with free.
+    node->~Buffer();
     free(node);
   }
 }
@@ -71,6 +76,11 @@ void nsScannerBufferList::SplitBuffer(const Position& pos) {
   if (new_buffer) {
     nsCharTraits<char16_t>::copy(new_buffer->DataStart(),
                                  bufferToSplit->DataStart() + splitOffset, len);
+    // Foxhound: split the taint along with the data. The tail [splitOffset, end)
+    // moves to the new buffer (rebased to 0), the head [0, splitOffset) stays.
+    new_buffer->Taint() =
+        bufferToSplit->Taint().safeSubTaint(splitOffset, splitOffset + len);
+    bufferToSplit->Taint().clearAfter(splitOffset);
     InsertAfter(new_buffer, bufferToSplit);
     bufferToSplit->SetDataLength(splitOffset);
   }
@@ -81,6 +91,8 @@ void nsScannerBufferList::DiscardUnreferencedPrefix(Buffer* aBuf) {
     while (!mBuffers.isEmpty() && !Head()->IsInUse()) {
       Buffer* buffer = Head();
       buffer->remove();
+      // Foxhound: destruct the owned taint before freeing malloc'd memory.
+      buffer->~Buffer();
       free(buffer);
     }
   }

@@ -808,13 +808,14 @@ nsresult nsXMLContentSink::FlushText(bool aReleaseTextNode) {
         ++mInNotification;
       }
 
-      // Foxhound: nsXMLContentSink isn't taint aware..
-      rv = mLastTextNode->AppendText(mText, mTextLength, notify, EmptyTaint);
+      // Foxhound: propagate the accumulated taint for the buffered text.
+      rv = mLastTextNode->AppendText(mText, mTextLength, notify, mTextTaint);
       if (notify) {
         --mInNotification;
       }
 
       mTextLength = 0;
+      mTextTaint.clear();
     } else {
       RefPtr<nsTextNode> textContent =
           new (mNodeInfoManager) nsTextNode(mNodeInfoManager);
@@ -822,8 +823,10 @@ nsresult nsXMLContentSink::FlushText(bool aReleaseTextNode) {
       mLastTextNode = textContent;
 
       // Set the text in the text node
-      textContent->SetText(mText, mTextLength, false, EmptyTaint);
+      // Foxhound: propagate the accumulated taint for the buffered text.
+      textContent->SetText(mText, mTextLength, false, mTextTaint);
       mTextLength = 0;
+      mTextTaint.clear();
 
       // Add text to its parent
       rv = AddContentAsLeaf(textContent);
@@ -952,9 +955,20 @@ nsXMLContentSink::HandleStartElement(const char16_t* aName,
                             aColumnNumber, true);
 }
 
+// Foxhound: taint-aware variant of HandleStartElement.
+NS_IMETHODIMP
+nsXMLContentSink::HandleStartElementWithTaint(
+    const char16_t* aName, const char16_t** aAtts, uint32_t aAttsCount,
+    uint32_t aLineNumber, uint32_t aColumnNumber,
+    const StringTaint** aAttsTaint) {
+  return HandleStartElement(aName, aAtts, aAttsCount, aLineNumber, aColumnNumber,
+                            true, aAttsTaint);
+}
+
 nsresult nsXMLContentSink::HandleStartElement(
     const char16_t* aName, const char16_t** aAtts, uint32_t aAttsCount,
-    uint32_t aLineNumber, uint32_t aColumnNumber, bool aInterruptable) {
+    uint32_t aLineNumber, uint32_t aColumnNumber, bool aInterruptable,
+    const StringTaint** aAttsTaint) {
   MOZ_ASSERT(aAttsCount % 2 == 0, "incorrect aAttsCount");
   // Adjust aAttsCount so it's the actual number of attributes
   aAttsCount /= 2;
@@ -1002,7 +1016,7 @@ nsresult nsXMLContentSink::HandleStartElement(
   NS_ENSURE_SUCCESS(result, result);
 
   // Set the attributes on the new content element
-  result = AddAttributes(aAtts, content->AsElement());
+  result = AddAttributes(aAtts, content->AsElement(), aAttsTaint);
 
   if (NS_OK == result) {
     // Store the element
@@ -1144,10 +1158,21 @@ nsresult nsXMLContentSink::HandleEndElement(const char16_t* aName,
 
 NS_IMETHODIMP
 nsXMLContentSink::HandleComment(const char16_t* aName) {
+  return HandleCommentWithTaint(aName, nullptr);
+}
+
+// Foxhound: taint-aware variant of HandleComment.
+NS_IMETHODIMP
+nsXMLContentSink::HandleCommentWithTaint(const char16_t* aName,
+                                         const StringTaint* aTaint) {
   FlushText();
 
   RefPtr<Comment> comment = new (mNodeInfoManager) Comment(mNodeInfoManager);
-  comment->SetText(nsDependentString(aName), false);
+  nsDependentString commentText(aName);
+  if (aTaint && aTaint->hasTaint()) {
+    commentText.AssignTaint(*aTaint);
+  }
+  comment->SetText(commentText, false);
   nsresult rv = AddContentAsLeaf(comment);
   DidAddContent();
 
@@ -1156,18 +1181,26 @@ nsXMLContentSink::HandleComment(const char16_t* aName) {
 
 NS_IMETHODIMP
 nsXMLContentSink::HandleCDataSection(const char16_t* aData, uint32_t aLength) {
+  return HandleCDataSectionWithTaint(aData, aLength, nullptr);
+}
+
+// Foxhound: taint-aware variant of HandleCDataSection.
+NS_IMETHODIMP
+nsXMLContentSink::HandleCDataSectionWithTaint(const char16_t* aData,
+                                              uint32_t aLength,
+                                              const StringTaint* aTaint) {
+  const StringTaint& taint = aTaint ? *aTaint : EmptyTaint;
   // XSLT doesn't differentiate between text and cdata and wants adjacent
   // textnodes merged, so add as text.
   if (mXSLTProcessor) {
-    return AddText(aData, aLength);
+    return AddText(aData, aLength, taint);
   }
 
   FlushText();
 
   RefPtr<CDATASection> cdata =
     new (mNodeInfoManager) CDATASection(mNodeInfoManager);
-  // Foxhound: here and above, no taint available..
-  cdata->SetText(aData, aLength, false, EmptyTaint);
+  cdata->SetText(aData, aLength, false, taint);
   nsresult rv = AddContentAsLeaf(cdata);
   DidAddContent();
 
@@ -1205,13 +1238,23 @@ nsXMLContentSink::HandleCharacterData(const char16_t* aData, uint32_t aLength) {
   return HandleCharacterData(aData, aLength, true);
 }
 
+// Foxhound: taint-aware variant of HandleCharacterData.
+NS_IMETHODIMP
+nsXMLContentSink::HandleCharacterDataWithTaint(const char16_t* aData,
+                                               uint32_t aLength,
+                                               const StringTaint* aTaint) {
+  return HandleCharacterData(aData, aLength, true,
+                             aTaint ? *aTaint : EmptyTaint);
+}
+
 nsresult nsXMLContentSink::HandleCharacterData(const char16_t* aData,
                                                uint32_t aLength,
-                                               bool aInterruptable) {
+                                               bool aInterruptable,
+                                               const StringTaint& aTaint) {
   nsresult rv = NS_OK;
   if (aData && mState != eXMLContentSinkState_InProlog &&
       mState != eXMLContentSinkState_InEpilog) {
-    rv = AddText(aData, aLength);
+    rv = AddText(aData, aLength, aTaint);
   }
   return aInterruptable && NS_SUCCEEDED(rv) ? DidProcessATokenImpl() : rv;
 }
@@ -1418,18 +1461,28 @@ nsXMLContentSink::ReportError(const char16_t* aErrorText,
 }
 
 nsresult nsXMLContentSink::AddAttributes(const char16_t** aAtts,
-                                         Element* aContent) {
+                                         Element* aContent,
+                                         const StringTaint** aAttsTaint) {
   // Add tag attributes to the content attributes
   RefPtr<nsAtom> prefix, localName;
+  uint32_t index = 0;
   while (*aAtts) {
     int32_t nameSpaceID;
     nsContentUtils::SplitExpatName(aAtts[0], getter_AddRefs(prefix),
                                    getter_AddRefs(localName), &nameSpaceID);
 
+    // Foxhound: attach taint (if any) to the value so it is preserved in the
+    // attribute's storage and returned by getAttribute().
+    nsDependentString value(aAtts[1]);
+    if (aAttsTaint && aAttsTaint[index + 1] &&
+        aAttsTaint[index + 1]->hasTaint()) {
+      value.AssignTaint(*aAttsTaint[index + 1]);
+    }
+
     // Add attribute to content
-    aContent->SetAttr(nameSpaceID, localName, prefix,
-                      nsDependentString(aAtts[1]), false);
+    aContent->SetAttr(nameSpaceID, localName, prefix, value, false);
     aAtts += 2;
+    index += 2;
   }
 
   return NS_OK;
@@ -1437,7 +1490,8 @@ nsresult nsXMLContentSink::AddAttributes(const char16_t** aAtts,
 
 #define NS_ACCUMULATION_BUFFER_SIZE 4096
 
-nsresult nsXMLContentSink::AddText(const char16_t* aText, int32_t aLength) {
+nsresult nsXMLContentSink::AddText(const char16_t* aText, int32_t aLength,
+                                   const StringTaint& aTaint) {
   // Copy data from string into our buffer; flush buffer when it fills up.
   int32_t offset = 0;
   while (0 != aLength) {
@@ -1455,6 +1509,12 @@ nsresult nsXMLContentSink::AddText(const char16_t* aText, int32_t aLength) {
       amount = aLength;
     }
     memcpy(&mText[mTextLength], &aText[offset], sizeof(char16_t) * amount);
+    // Foxhound: accumulate the taint for the copied characters at the matching
+    // position in mText (mTextTaint is indexed from the start of mText).
+    if (aTaint.hasTaint()) {
+      mTextTaint.concat(aTaint.safeSubTaint(offset, offset + amount),
+                        mTextLength);
+    }
     mTextLength += amount;
     offset += amount;
     aLength -= amount;

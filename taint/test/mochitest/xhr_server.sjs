@@ -53,6 +53,12 @@ function handleRequest(request, response) {
      response.setHeader("X-Taint", '[{"begin": 12, "end": 18, "source": "e2e"}]', false);
      response.write(`<div id="a">hello!</div>`);
      break;
+    case "e2e-xml-rich":
+     // Exercises taint propagation for attribute values, comments and CDATA.
+     response.setHeader("Content-Type", "text/xml", false);
+     response.setHeader("X-Taint", '[{"begin": 0, "end": 60, "source": "e2e"}]', false);
+     response.write(`<r id="abc"><!--cmt--><c><![CDATA[cdata!]]></c></r>`);
+     break;
     default:
      response.setHeader("Content-Type", "text/plain", false);
      response.write("hello!");

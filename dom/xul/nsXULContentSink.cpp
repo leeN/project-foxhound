@@ -481,6 +481,37 @@ XULContentSinkImpl::HandleCharacterData(const char16_t* aData,
   return NS_OK;
 }
 
+// Foxhound: the XUL sink does not track taint; the taint-aware variants just
+// delegate to their plain counterparts.
+NS_IMETHODIMP
+XULContentSinkImpl::HandleCharacterDataWithTaint(const char16_t* aData,
+                                                 uint32_t aLength,
+                                                 const StringTaint* aTaint) {
+  return HandleCharacterData(aData, aLength);
+}
+
+NS_IMETHODIMP
+XULContentSinkImpl::HandleStartElementWithTaint(
+    const char16_t* aName, const char16_t** aAtts, uint32_t aAttsCount,
+    uint32_t aLineNumber, uint32_t aColumnNumber,
+    const StringTaint** aAttsTaint) {
+  return HandleStartElement(aName, aAtts, aAttsCount, aLineNumber,
+                            aColumnNumber);
+}
+
+NS_IMETHODIMP
+XULContentSinkImpl::HandleCommentWithTaint(const char16_t* aName,
+                                           const StringTaint* aTaint) {
+  return HandleComment(aName);
+}
+
+NS_IMETHODIMP
+XULContentSinkImpl::HandleCDataSectionWithTaint(const char16_t* aData,
+                                                uint32_t aLength,
+                                                const StringTaint* aTaint) {
+  return HandleCDataSection(aData, aLength);
+}
+
 NS_IMETHODIMP
 XULContentSinkImpl::HandleProcessingInstruction(const char16_t* aTarget,
                                                 const char16_t* aData) {

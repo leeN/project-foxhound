@@ -142,6 +142,30 @@ txStylesheetSink::HandleCDataSection(const char16_t* aData, uint32_t aLength) {
   return HandleCharacterData(aData, aLength);
 }
 
+// Foxhound: the XSLT stylesheet sink does not track taint; the taint-aware
+// variants delegate to their plain counterparts.
+NS_IMETHODIMP
+txStylesheetSink::HandleStartElementWithTaint(
+    const char16_t* aName, const char16_t** aAtts, uint32_t aAttsCount,
+    uint32_t aLineNumber, uint32_t aColumnNumber,
+    const StringTaint** aAttsTaint) {
+  return HandleStartElement(aName, aAtts, aAttsCount, aLineNumber,
+                            aColumnNumber);
+}
+
+NS_IMETHODIMP
+txStylesheetSink::HandleCommentWithTaint(const char16_t* aName,
+                                         const StringTaint* aTaint) {
+  return HandleComment(aName);
+}
+
+NS_IMETHODIMP
+txStylesheetSink::HandleCDataSectionWithTaint(const char16_t* aData,
+                                              uint32_t aLength,
+                                              const StringTaint* aTaint) {
+  return HandleCDataSection(aData, aLength);
+}
+
 NS_IMETHODIMP
 txStylesheetSink::HandleDoctypeDecl(const nsAString& aSubset,
                                     const nsAString& aName,
@@ -160,6 +184,14 @@ txStylesheetSink::HandleCharacterData(const char16_t* aData, uint32_t aLength) {
   }
 
   return NS_OK;
+}
+
+// Foxhound: the XSLT stylesheet sink does not track taint; ignore it.
+NS_IMETHODIMP
+txStylesheetSink::HandleCharacterDataWithTaint(const char16_t* aData,
+                                               uint32_t aLength,
+                                               const StringTaint* aTaint) {
+  return HandleCharacterData(aData, aLength);
 }
 
 NS_IMETHODIMP

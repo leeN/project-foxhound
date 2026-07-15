@@ -475,13 +475,84 @@ void nsExpatDriver::HandleStartElement(rlbox_sandbox_expat& aSandbox,
       return;
     }
 
-    nsresult rv = self->mSink->HandleStartElement(
-        name, attrs, attrArrayLength,
-        RLBOX_EXPAT_SAFE_CALL(MOZ_XML_GetCurrentLineNumber,
-                              safe_unverified<XML_Size>),
-        RLBOX_EXPAT_SAFE_CALL(MOZ_XML_GetCurrentColumnNumber,
-                              safe_unverified<XML_Size>));
+    uint32_t lineNumber = RLBOX_EXPAT_SAFE_CALL(MOZ_XML_GetCurrentLineNumber,
+                                                safe_unverified<XML_Size>);
+    uint32_t columnNumber = RLBOX_EXPAT_SAFE_CALL(
+        MOZ_XML_GetCurrentColumnNumber, safe_unverified<XML_Size>);
+
+    nsresult rv;
+    if (self->mExpatInputTaint.hasTaint()) {
+      // Foxhound: recover taint for the attribute values by locating them in
+      // the buffered source of this start tag.
+      auto byteIndex = RLBOX_EXPAT_SAFE_CALL(MOZ_XML_GetCurrentByteIndex,
+                                             [](auto idx) { return idx; });
+      nsTArray<SafeStringTaint> attrTaints;
+      self->ComputeAttrValueTaints(attrs, attrArrayLength, byteIndex,
+                                   attrTaints);
+      nsTArray<const StringTaint*> attrTaintPtrs(attrArrayLength);
+      for (uint32_t i = 0; i < attrArrayLength; i++) {
+        attrTaintPtrs.AppendElement(&attrTaints[i]);
+      }
+      rv = self->mSink->HandleStartElementWithTaint(
+          name, attrs, attrArrayLength, lineNumber, columnNumber,
+          attrTaintPtrs.Elements());
+    } else {
+      rv = self->mSink->HandleStartElement(name, attrs, attrArrayLength,
+                                           lineNumber, columnNumber);
+    }
     self->MaybeStopParser(rv);
+  }
+}
+
+void nsExpatDriver::ComputeAttrValueTaints(const char16_t** aAtts,
+                                           uint32_t aAttsCount,
+                                           int64_t aTagByteIndex,
+                                           nsTArray<SafeStringTaint>& aTaints) {
+  aTaints.Clear();
+  aTaints.SetLength(aAttsCount);
+  if (aTagByteIndex < 0 || !mExpatInputTextStarted ||
+      !mExpatInputTaint.hasTaint()) {
+    return;
+  }
+
+  int64_t tagAbs = aTagByteIndex / static_cast<int64_t>(sizeof(char16_t));
+  int64_t tagLocal = tagAbs - static_cast<int64_t>(mExpatInputTextBase);
+  const uint32_t textLen = mExpatInputText.Length();
+  if (tagLocal < 0 || static_cast<uint32_t>(tagLocal) >= textLen) {
+    return;
+  }
+
+  const char16_t* text = mExpatInputText.BeginReading();
+  const uint32_t tagStart = static_cast<uint32_t>(tagLocal);
+  // Restrict the search to the current start tag.
+  uint32_t tagEnd = tagStart;
+  while (tagEnd < textLen && text[tagEnd] != u'>') {
+    ++tagEnd;
+  }
+
+  for (uint32_t k = 0; 2 * k + 1 < aAttsCount; ++k) {
+    const char16_t* value = aAtts[2 * k + 1];
+    if (!value) {
+      continue;
+    }
+    uint32_t valueLen = NS_strlen(value);
+    if (valueLen == 0 || valueLen > tagEnd - tagStart) {
+      continue;
+    }
+    // Locate the value within the tag, requiring it to be immediately preceded
+    // by a quote or '=' so we match the attribute value rather than an
+    // attribute name or a coincidental substring. Values produced by entity
+    // expansion or DTD defaults won't appear verbatim and are left untainted.
+    for (uint32_t pos = tagStart + 1; pos + valueLen <= tagEnd; ++pos) {
+      char16_t prev = text[pos - 1];
+      if ((prev == u'"' || prev == u'\'' || prev == u'=') &&
+          !nsCharTraits<char16_t>::compare(text + pos, value, valueLen)) {
+        uint32_t valueAbs = mExpatInputTextBase + pos;
+        aTaints[2 * k + 1] =
+            mExpatInputTaint.safeSubTaint(valueAbs, valueAbs + valueLen);
+        break;
+      }
+    }
   }
 }
 
@@ -565,12 +636,31 @@ nsresult nsExpatDriver::HandleCharacterData(const char16_t* aValue,
                                             const uint32_t aLength) {
   NS_ASSERTION(mSink, "content sink not found!");
 
+  // Foxhound: Expat runs in an RLBox sandbox so taint is stripped from the data
+  // it hands back. Re-associate taint by mapping the current event's byte
+  // offset (XML_GetCurrentByteIndex) into the cumulative taint of the input we
+  // fed to Expat. This is only meaningful for the main document parser; the
+  // external DTD entity parser has its own byte index that doesn't line up with
+  // mExpatInputTaint.
+  SafeStringTaint taint;
+  if (!mInExternalDTD && mExpatInputTaint.hasTaint()) {
+    auto byteIndex = RLBOX_EXPAT_SAFE_MCALL(
+        MOZ_XML_GetCurrentByteIndex, [](auto idx) { return idx; });
+    if (byteIndex >= 0) {
+      uint32_t charOffset = static_cast<uint32_t>(byteIndex) / sizeof(char16_t);
+      taint = mExpatInputTaint.safeSubTaint(charOffset, charOffset + aLength);
+    }
+  }
+
   if (mInCData) {
+    uint32_t oldLength = mCDataText.Length();
     if (!mCDataText.Append(aValue, aLength, fallible)) {
       MaybeStopParser(NS_ERROR_OUT_OF_MEMORY);
+    } else if (taint.hasTaint()) {
+      mCDataText.Taint().concat(taint, oldLength);
     }
   } else if (mSink) {
-    nsresult rv = mSink->HandleCharacterData(aValue, aLength);
+    nsresult rv = mSink->HandleCharacterDataWithTaint(aValue, aLength, &taint);
     MaybeStopParser(rv);
   }
 
@@ -590,7 +680,21 @@ nsresult nsExpatDriver::HandleComment(const char16_t* aValue) {
     mInternalSubset.Append(aValue);
     mInternalSubset.AppendLiteral("-->");
   } else if (mSink) {
-    nsresult rv = mSink->HandleComment(aValue);
+    // Foxhound: recover taint for the comment text. Expat reports the byte
+    // index of the start of the comment construct ("<!--"), so the content
+    // begins 4 characters later.
+    SafeStringTaint taint;
+    uint32_t length = NS_strlen(aValue);
+    if (mExpatInputTaint.hasTaint()) {
+      auto byteIndex = RLBOX_EXPAT_SAFE_MCALL(MOZ_XML_GetCurrentByteIndex,
+                                              [](auto idx) { return idx; });
+      if (byteIndex >= 0) {
+        uint32_t charOffset =
+            static_cast<uint32_t>(byteIndex) / sizeof(char16_t) + 4;
+        taint = mExpatInputTaint.safeSubTaint(charOffset, charOffset + length);
+      }
+    }
+    nsresult rv = mSink->HandleCommentWithTaint(aValue, &taint);
     MaybeStopParser(rv);
   }
 
@@ -668,8 +772,10 @@ nsresult nsExpatDriver::HandleEndCdataSection() {
 
   mInCData = false;
   if (mSink) {
-    nsresult rv =
-        mSink->HandleCDataSection(mCDataText.get(), mCDataText.Length());
+    // Foxhound: mCDataText accumulated taint in HandleCharacterData.
+    const StringTaint& taint = mCDataText.Taint();
+    nsresult rv = mSink->HandleCDataSectionWithTaint(
+        mCDataText.get(), mCDataText.Length(), &taint);
     MaybeStopParser(rv);
   }
   mCDataText.Truncate();
@@ -1174,16 +1280,23 @@ void nsExpatDriver::ChunkAndParseBuffer(const char16_t* aBuffer,
                                         uint32_t aLength, bool aIsFinal,
                                         uint32_t* aPassedToExpat,
                                         uint32_t* aConsumed,
-                                        XML_Size* aLastLineLength) {
+                                        XML_Size* aLastLineLength,
+                                        const StringTaint& aBufferTaint) {
   *aConsumed = 0;
   *aLastLineLength = 0;
 
+  // Foxhound: track the offset into aBufferTaint so each chunk gets the taint
+  // corresponding to its slice of the buffer.
+  uint32_t taintOffset = 0;
   uint32_t remainder = aLength;
   while (remainder > sMaxChunkLength) {
     ParseChunk(aBuffer, sMaxChunkLength, ChunkOrBufferIsFinal::None, aConsumed,
-               aLastLineLength);
+               aLastLineLength,
+               aBufferTaint.safeSubTaint(taintOffset,
+                                         taintOffset + sMaxChunkLength));
     aBuffer += sMaxChunkLength;
     remainder -= sMaxChunkLength;
+    taintOffset += sMaxChunkLength;
     if (NS_FAILED(mInternalState)) {
       // Stop parsing if there's an error (including if we're blocked or
       // interrupted).
@@ -1195,13 +1308,15 @@ void nsExpatDriver::ChunkAndParseBuffer(const char16_t* aBuffer,
   ParseChunk(aBuffer, remainder,
              aIsFinal ? ChunkOrBufferIsFinal::FinalChunkAndBuffer
                       : ChunkOrBufferIsFinal::FinalChunk,
-             aConsumed, aLastLineLength);
+             aConsumed, aLastLineLength,
+             aBufferTaint.safeSubTaint(taintOffset, taintOffset + remainder));
   *aPassedToExpat = aLength;
 }
 
 void nsExpatDriver::ParseChunk(const char16_t* aBuffer, uint32_t aLength,
                                ChunkOrBufferIsFinal aIsFinal,
-                               uint32_t* aConsumed, XML_Size* aLastLineLength) {
+                               uint32_t* aConsumed, XML_Size* aLastLineLength,
+                               const StringTaint& aChunkTaint) {
   NS_ASSERTION((aBuffer && aLength != 0) || (!aBuffer && aLength == 0), "?");
   NS_ASSERTION(mInternalState != NS_OK ||
                    (aIsFinal == ChunkOrBufferIsFinal::FinalChunkAndBuffer) ||
@@ -1232,6 +1347,26 @@ void nsExpatDriver::ParseChunk(const char16_t* aBuffer, uint32_t aLength,
     mInternalState = NS_OK;  // Resume in case we're blocked.
     status = RLBOX_EXPAT_SAFE_MCALL(MOZ_XML_ResumeParser, status_verifier);
   } else {
+    // Foxhound: record the taint of the chunk we're about to feed to Expat,
+    // keyed by the cumulative number of char16_t's fed so far. Expat's byte
+    // index (used later in HandleCharacterData) divided by sizeof(char16_t)
+    // indexes into this accumulated taint.
+    if (aChunkTaint.hasTaint()) {
+      mExpatInputTaint.concat(aChunkTaint, mExpatInputCharCount);
+    }
+    // Foxhound: once we've seen taint, keep a contiguous copy of the input from
+    // that point on so attribute values can be located in the source (Expat
+    // does not report per-attribute byte offsets).
+    if (!mExpatInputTextStarted &&
+        (aChunkTaint.hasTaint() || mExpatInputTaint.hasTaint())) {
+      mExpatInputTextStarted = true;
+      mExpatInputTextBase = mExpatInputCharCount;
+    }
+    if (mExpatInputTextStarted && aBuffer) {
+      mExpatInputText.Append(aBuffer, aLength);
+    }
+    mExpatInputCharCount += aLength;
+
     buffer.emplace(Sandbox(), aBuffer, aLength);
     MOZ_RELEASE_ASSERT(!aBuffer || !!*buffer.ref(),
                        "Chunking should avoid OOM in ParseBuffer");
@@ -1301,6 +1436,8 @@ nsresult nsExpatDriver::ResumeParse(nsScanner& aScanner, bool aIsFinalChunk) {
 
     const char16_t* buffer;
     uint32_t length;
+    // Foxhound: taint for the [start, start+length) region being fed to Expat.
+    SafeStringTaint chunkTaint;
     if (blocked || noMoreBuffers) {
       // If we're blocked we just resume Expat so we don't need a buffer, if
       // there aren't any more buffers we pass a null buffer to Expat.
@@ -1328,6 +1465,17 @@ nsresult nsExpatDriver::ResumeParse(nsScanner& aScanner, bool aIsFinalChunk) {
       buffer = start.get();
       length = uint32_t(start.size_forward());
 
+      // Foxhound: extract the taint for this slice from the owning scanner
+      // buffer. size_forward() guarantees [start, start+length) lies within a
+      // single scanner Buffer, whose taint is indexed relative to DataStart().
+      const nsScannerBufferList::Buffer* scannerBuf = start.buffer();
+      if (scannerBuf && scannerBuf->Taint().hasTaint()) {
+        uint32_t bufOffset =
+            uint32_t(start.get() - scannerBuf->DataStart());
+        chunkTaint =
+            scannerBuf->Taint().safeSubTaint(bufOffset, bufOffset + length);
+      }
+
       MOZ_LOG(gExpatDriverLog, LogLevel::Debug,
               ("Calling Expat, will parse data remaining in Expat's buffer and "
                "new data.\nContent of Expat's buffer:\n-----\n%s\n-----\nNew "
@@ -1341,7 +1489,7 @@ nsresult nsExpatDriver::ResumeParse(nsScanner& aScanner, bool aIsFinalChunk) {
     uint32_t consumed;
     XML_Size lastLineLength;
     ChunkAndParseBuffer(buffer, length, noMoreBuffers, &passedToExpat,
-                        &consumed, &lastLineLength);
+                        &consumed, &lastLineLength, chunkTaint);
     MOZ_ASSERT_IF(passedToExpat != length, NS_FAILED(mInternalState));
     MOZ_ASSERT(consumed <= passedToExpat + mExpatBuffered);
     if (consumed > 0) {
