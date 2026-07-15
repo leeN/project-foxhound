@@ -385,6 +385,13 @@ static nsresult T_EscapeURL(const typename T::char_type* aPart, size_t aPartLen,
          (c >= 0x20 && c < 0x7f && ignoreAscii)) &&
         !(c == ':' && colon) && !(c == ' ' && spaces)) {
       if (writing) {
+        // Foxhound: propagate taint for the copied (non-escaped) character.
+        // Without this, the esc_AlwaysCopy path (and the tail of a string
+        // after the first escaped character) would drop taint information.
+        if (aTaint.at(i)) {
+          tempTaint.append(
+              TaintRange(tempBufferPos, tempBufferPos + 1, *aTaint.at(i)));
+        }
         tempBuffer[tempBufferPos++] = c;
       }
     } else { /* do the escape magic */

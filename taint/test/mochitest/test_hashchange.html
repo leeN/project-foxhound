@@ -1,0 +1,61 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Check Inner HTML</title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css"/>
+    <script id="script">
+        function run() {
+        location.hash = "foo";
+        let l0 = e => {
+          SimpleTest.info(`listener0: ${e.oldURL} -> ${e.newURL}`);
+                            window.removeEventListener("hashchange", l0);
+
+                window.addEventListener("hashchange", listener1);
+
+        };
+                window.addEventListener("hashchange", l0);
+
+        SimpleTest.info(`Set to untainted ${location.hash}`);
+        SimpleTest.waitForExplicitFinish();
+
+        let listener1 = e => {
+          SimpleTest.info(`listener1: ${e.oldURL} -> ${e.newURL}`);
+          // oldURL still refers to the "#foo" fragment, which was set from an
+          // untainted string, so only newURL ("#bar") carries taint here.
+          check_untainted(e.oldURL);
+          check_tainted(e.newURL);
+                  window.removeEventListener("hashchange", listener1);
+
+        window.addEventListener("hashchange", listener2);
+        }
+
+        let listener2 = e => {
+          SimpleTest.info(`listener2: ${e.oldURL} -> ${e.newURL}`);
+
+          check_tainted(e.oldURL);
+          check_untainted(e.newURL);
+          window.removeEventListener("hashchange", listener2);
+
+          SimpleTest.finish();
+
+        }
+
+        location.hash = String.tainted("bar");
+
+        SimpleTest.info(`Set to tainted ${location.hash}`);
+
+        location.hash = "baz";
+        SimpleTest.info(`Set to untainted ${location.hash}`);
+
+
+      }
+
+
+    </script>
+  </head>
+  <body onload="run();">
+    hash Change
+  </body>
+</html>

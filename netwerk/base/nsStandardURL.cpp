@@ -880,6 +880,10 @@ int32_t nsStandardURL::ReplaceSegment(uint32_t pos, uint32_t len,
   if (val && valLen) {
     if (len == 0) {
       mSpec.Insert(val, pos, valLen);
+      // Foxhound: propagate taint for the inserted segment. The insert above
+      // shifts any existing taint to the right, so the [pos, pos + valLen)
+      // range is empty and ready to receive the segment's taint.
+      mSpec.Taint().insert(pos, taint);
     } else {
       mSpec.Replace(pos, len, nsDependentCString(val, valLen));
       mSpec.Taint().replace(pos, pos + len, valLen, taint);
@@ -2980,9 +2984,14 @@ nsresult nsStandardURL::SetRef(const nsACString& input) {
 
   ref = filteredURI.get();
   int32_t refLen = filteredURI.Length();
+  // Foxhound: track the offset of the ref inside filteredURI so that the
+  // matching sub-taint is used below. When a leading '#' is skipped, the
+  // taint information has to be shifted accordingly as well.
+  uint32_t refPos = 0;
   if (ref[0] == '#') {
     ref++;
     refLen--;
+    refPos = 1;
   }
 
   if (mRef.mLen < 0) {
@@ -2992,17 +3001,19 @@ nsresult nsStandardURL::SetRef(const nsACString& input) {
     mRef.mLen = 0;
   }
 
-  // If precent encoding is necessary, `ref` will point to `buf`'s content.
+  // Foxhound: always copy the ref into `buf` (esc_AlwaysCopy) so that its
+  // taint information is preserved and correctly rebased even when no
+  // percent-encoding is required. Passing filteredURI.Taint() together with
+  // the refPos offset makes sure the taint matches the copied characters.
   // `buf` needs to outlive any use of the `ref` pointer.
   nsAutoCString buf;
-  // encode ref if necessary
   bool encoded;
   nsSegmentEncoder encoder;
-  encoder.EncodeSegmentCount(ref, flat.Taint(), URLSegment(0, refLen), esc_Ref, buf, encoded);
-  if (encoded) {
-    ref = buf.get();
-    refLen = buf.Length();
-  }
+  encoder.EncodeSegmentCount(filteredURI.get(), filteredURI.Taint(),
+                             URLSegment(refPos, refLen),
+                             esc_Ref | esc_AlwaysCopy, buf, encoded);
+  ref = buf.get();
+  refLen = buf.Length();
 
   int32_t shift = ReplaceSegment(mRef.mPos, mRef.mLen, ref, refLen, buf.Taint());
   mPath.mLen += shift;
