@@ -1,0 +1,66 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Structured clone taint propagation</title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css"/>
+    <script>
+      SimpleTest.waitForExplicitFinish();
+
+      // Direct structuredClone() runs in the SameProcess scope with no
+      // MessageEvent source overlaid, so it is the cleanest check that the
+      // structured-clone (de)serialization itself preserves taint and its
+      // full flow. Before the JSStructuredCloneWriter/Reader were made taint
+      // aware, the clone came back completely untainted.
+      function testStructuredCloneGlobal() {
+        const s = String.tainted("hello world", "sc-direct");
+        const clone = structuredClone(s);
+        check_tainted(clone);
+        // The original source must still sit at the root of the flow.
+        check_taint_source(clone, "sc-direct");
+
+        // A tainted string nested inside a cloned object.
+        const obj = structuredClone({ a: 1, payload: String.tainted("nested", "sc-nested") });
+        check_tainted(obj.payload);
+        check_taint_source(obj.payload, "sc-nested");
+
+        // A tainted string inside a cloned array.
+        const arr = structuredClone([String.tainted("in-array", "sc-array")]);
+        check_tainted(arr[0]);
+        check_taint_source(arr[0], "sc-array");
+
+        // An untainted string as the last value in the buffer: this must round
+        // trip without error (regression guard for the end-of-buffer taint
+        // peek) and come back untainted.
+        const plain = structuredClone("plain untainted string");
+        is(plain, "plain untainted string", "untainted clone round-trips");
+        check_untainted(plain);
+      }
+
+      // window.postMessage also clones the message. Here the MessageEvent
+      // source is overlaid on receipt, but the original source must survive at
+      // the root of the flow (which it only can if the clone preserved it).
+      function testPostMessage() {
+        return new Promise((resolve) => {
+          window.addEventListener("message", function handler(event) {
+            if (typeof event.data === "string" && event.data.startsWith("PM:")) {
+              window.removeEventListener("message", handler);
+              check_tainted(event.data);
+              check_taint_source(event.data, "pm-source");
+              resolve();
+            }
+          }, false);
+          window.postMessage(String.tainted("PM:hi", "pm-source"));
+        });
+      }
+
+      async function startTest() {
+        testStructuredCloneGlobal();
+        await testPostMessage();
+        SimpleTest.finish();
+      }
+    </script>
+  </head>
+  <body onload="startTest()"></body>
+</html>

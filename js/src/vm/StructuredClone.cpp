@@ -44,6 +44,8 @@
 
 #include "jsdate.h"
 
+#include "Taint.h"  // Foxhound: StringTaint / TaintRange / TaintFlow / ...
+
 #include "builtin/DataViewObject.h"
 #include "builtin/MapObject.h"
 #include "gc/GC.h"           // AutoSelectGCHeap
@@ -153,6 +155,12 @@ enum StructuredDataType : uint32_t {
   SCTAG_RESIZABLE_ARRAY_BUFFER_OBJECT,
   SCTAG_GROWABLE_SHARED_ARRAY_BUFFER_OBJECT,
   SCTAG_IMMUTABLE_ARRAY_BUFFER_OBJECT,
+
+  // Foxhound: trailing block emitted right after a string's characters when
+  // that string carries taint. Appended here (not inserted earlier) so it does
+  // not renumber any existing tag or invalidate previously persisted data;
+  // untainted strings never emit it.
+  SCTAG_TAINT,
 
   SCTAG_TYPED_ARRAY_V1_MIN = 0xFFFF0100,
   SCTAG_TYPED_ARRAY_V1_INT8 = SCTAG_TYPED_ARRAY_V1_MIN + Scalar::Int8,
@@ -1317,6 +1325,171 @@ bool JSStructuredCloneWriter::reportDataCloneError(uint32_t errorId,
   return false;
 }
 
+namespace {
+
+// Foxhound: binary (de)serialization of taint into the structured-clone
+// stream. Integers go through SCOutput::write / SCInput::read and char16 data
+// through writeChars / readChars, all of which byte-swap to/from little-endian,
+// so this encoding is endian-portable like the rest of the clone format. It
+// mirrors the Dump*/Load* JSON round trip in Taint.cpp, field for field.
+
+[[nodiscard]] bool WriteScU32(SCOutput& out, uint32_t v) {
+  return out.write(uint64_t(v));
+}
+
+[[nodiscard]] bool ReadScU32(SCInput& in, uint32_t* v) {
+  uint64_t u;
+  if (!in.read(&u)) {
+    return false;
+  }
+  if (u > UINT32_MAX) {
+    return false;  // corrupt input
+  }
+  *v = uint32_t(u);
+  return true;
+}
+
+// Narrow (operation name) and wide (filenames, arguments) strings: length +
+// character data. writeBytes/writeChars zero-pad to the 8-byte word boundary,
+// and readBytes/readChars consume that padding, so both round trip.
+[[nodiscard]] bool WriteScNarrow(SCOutput& out, const std::string& s) {
+  return WriteScU32(out, uint32_t(s.length())) &&
+         out.writeBytes(s.data(), s.length());
+}
+
+[[nodiscard]] bool ReadScNarrow(SCInput& in, std::string* s) {
+  uint32_t len = 0;
+  if (!ReadScU32(in, &len)) {
+    return false;
+  }
+  s->resize(len);
+  return len == 0 || in.readBytes(s->data(), len);
+}
+
+[[nodiscard]] bool WriteScWide(SCOutput& out, const std::u16string& s) {
+  return WriteScU32(out, uint32_t(s.length())) &&
+         out.writeChars(s.data(), s.length());
+}
+
+[[nodiscard]] bool ReadScWide(SCInput& in, std::u16string* s) {
+  uint32_t len = 0;
+  if (!ReadScU32(in, &len)) {
+    return false;
+  }
+  s->resize(len);
+  return len == 0 || in.readChars(s->data(), len);
+}
+
+[[nodiscard]] bool WriteScTaintLocation(SCOutput& out,
+                                        const TaintLocation& loc) {
+  return WriteScWide(out, loc.filename()) && WriteScU32(out, loc.line()) &&
+         WriteScU32(out, loc.pos()) && WriteScU32(out, loc.next_line()) &&
+         WriteScU32(out, loc.next_pos()) &&
+         WriteScU32(out, loc.scriptStartLine()) &&
+         out.writeBytes(loc.scriptHash().data(), loc.scriptHash().size()) &&
+         WriteScWide(out, loc.function());
+}
+
+[[nodiscard]] bool ReadScTaintLocation(SCInput& in, TaintLocation* loc) {
+  std::u16string filename, function;
+  uint32_t line = 0, pos = 0, nextLine = 0, nextPos = 0, scriptStartLine = 0;
+  TaintMd5 hash{};
+  if (!ReadScWide(in, &filename) || !ReadScU32(in, &line) ||
+      !ReadScU32(in, &pos) || !ReadScU32(in, &nextLine) ||
+      !ReadScU32(in, &nextPos) || !ReadScU32(in, &scriptStartLine) ||
+      !in.readBytes(hash.data(), hash.size()) || !ReadScWide(in, &function)) {
+    return false;
+  }
+  *loc = TaintLocation(std::move(filename), line, pos, nextLine, nextPos,
+                       scriptStartLine, hash, std::move(function));
+  return true;
+}
+
+[[nodiscard]] bool WriteScTaintOperation(SCOutput& out,
+                                         const TaintOperation& op) {
+  const std::vector<std::u16string>& args = op.arguments();
+  if (!WriteScNarrow(out, std::string(op.name())) ||
+      !WriteScTaintLocation(out, op.location()) ||
+      !WriteScU32(out, uint32_t(args.size()))) {
+    return false;
+  }
+  for (const auto& arg : args) {
+    if (!WriteScWide(out, arg)) {
+      return false;
+    }
+  }
+  return WriteScU32(out, op.isSource() ? 1u : 0u);
+}
+
+[[nodiscard]] bool ReadScTaintOperation(SCInput& in, TaintOperation* op) {
+  std::string name;
+  TaintLocation location;
+  uint32_t argCount = 0;
+  if (!ReadScNarrow(in, &name) || !ReadScTaintLocation(in, &location) ||
+      !ReadScU32(in, &argCount)) {
+    return false;
+  }
+  std::vector<std::u16string> args;
+  for (uint32_t i = 0; i < argCount; ++i) {
+    std::u16string arg;
+    if (!ReadScWide(in, &arg)) {
+      return false;
+    }
+    args.push_back(std::move(arg));
+  }
+  uint32_t isSource = 0;
+  if (!ReadScU32(in, &isSource)) {
+    return false;
+  }
+  *op = TaintOperation(name.c_str(), std::move(location), std::move(args));
+  if (isSource) {
+    op->setSource();
+  }
+  return true;
+}
+
+// A flow is written head (newest) to root (source); reconstructed by extending
+// in reverse, exactly as LoadTaintFlowFromJSON does.
+[[nodiscard]] bool WriteScTaintFlow(SCOutput& out, const TaintFlow& flow) {
+  uint32_t count = 0;
+  for (const auto& node : flow) {
+    (void)node;
+    ++count;
+  }
+  if (!WriteScU32(out, count)) {
+    return false;
+  }
+  for (const auto& node : flow) {
+    if (!WriteScTaintOperation(out, node.operation())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] bool ReadScTaintFlow(SCInput& in, TaintFlow* flow) {
+  uint32_t count = 0;
+  if (!ReadScU32(in, &count)) {
+    return false;
+  }
+  std::vector<TaintOperation> ops;
+  for (uint32_t i = 0; i < count; ++i) {
+    TaintOperation op("");
+    if (!ReadScTaintOperation(in, &op)) {
+      return false;
+    }
+    ops.push_back(std::move(op));
+  }
+  TaintFlow result;
+  for (auto it = ops.rbegin(); it != ops.rend(); ++it) {
+    result.extend(std::move(*it));
+  }
+  *flow = std::move(result);
+  return true;
+}
+
+}  // namespace
+
 bool JSStructuredCloneWriter::writeString(uint32_t tag, JSString* str) {
   JSLinearString* linear = str->ensureLinear(context());
   if (!linear) {
@@ -1360,13 +1533,43 @@ bool JSStructuredCloneWriter::writeString(uint32_t tag, JSString* str) {
       return false;
     }
     uintptr_t p = reinterpret_cast<uintptr_t>(buffer);
-    return out.writeBytes(&p, sizeof(p));
+    if (!out.writeBytes(&p, sizeof(p))) {
+      return false;
+    }
+  } else {
+    JS::AutoCheckCannotGC nogc;
+    if (!(linear->hasLatin1Chars()
+              ? out.writeChars(linear->latin1Chars(nogc), length)
+              : out.writeChars(linear->twoByteChars(nogc), length))) {
+      return false;
+    }
   }
 
-  JS::AutoCheckCannotGC nogc;
-  return linear->hasLatin1Chars()
-             ? out.writeChars(linear->latin1Chars(nogc), length)
-             : out.writeChars(linear->twoByteChars(nogc), length);
+  // Foxhound: if the string carries taint, append it as a trailing SCTAG_TAINT
+  // block so it survives the structured-clone round trip (postMessage,
+  // MessageChannel, BroadcastChannel, workers, history state, IndexedDB, the
+  // Cache API, ...), both same-process and across IPC. Untainted strings emit
+  // nothing, keeping their serialized form byte-identical to before. The block
+  // is <SCTAG_TAINT, rangeCount> followed by each range's [begin, end, flow].
+  const StringTaint& taint = linear->taint();
+  if (taint.hasTaint()) {
+    uint32_t rangeCount = 0;
+    for (const auto& range : taint) {
+      (void)range;
+      ++rangeCount;
+    }
+    if (!out.writePair(SCTAG_TAINT, rangeCount)) {
+      return false;
+    }
+    for (const auto& range : taint) {
+      if (!WriteScU32(out, range.begin()) || !WriteScU32(out, range.end()) ||
+          !WriteScTaintFlow(out, range.flow())) {
+        return false;
+      }
+    }
+  }
+
+  return true;
 }
 
 bool JSStructuredCloneWriter::writeBigInt(uint32_t tag, BigInt* bi) {
@@ -2624,6 +2827,7 @@ JSString* JSStructuredCloneReader::readString(uint32_t data,
     return nullptr;
   }
 
+  JSString* str = nullptr;
   if (hasBuffer) {
     if (allowedScope > JS::StructuredCloneScope::SameProcess) {
       JS_ReportErrorNumberASCII(context(), GetErrorMessage, nullptr,
@@ -2641,24 +2845,57 @@ JSString* JSStructuredCloneReader::readString(uint32_t data,
         reinterpret_cast<mozilla::StringBuffer*>(p));
     JSContext* cx = context();
     if (atomize) {
-      if (latin1) {
-        return AtomizeChars(cx, static_cast<Latin1Char*>(buffer->Data()),
-                            nchars);
-      }
-      return AtomizeChars(cx, static_cast<char16_t*>(buffer->Data()), nchars);
-    }
-    if (latin1) {
+      str = latin1
+                ? AtomizeChars(cx, static_cast<Latin1Char*>(buffer->Data()),
+                               nchars)
+                : AtomizeChars(cx, static_cast<char16_t*>(buffer->Data()),
+                               nchars);
+    } else if (latin1) {
       Rooted<JSString::OwnedChars<Latin1Char>> owned(cx, std::move(buffer),
                                                      nchars);
-      return JSLinearString::newValidLength<CanGC, Latin1Char>(cx, &owned,
-                                                               gcHeap);
+      str = JSLinearString::newValidLength<CanGC, Latin1Char>(cx, &owned,
+                                                              gcHeap);
+    } else {
+      Rooted<JSString::OwnedChars<char16_t>> owned(cx, std::move(buffer),
+                                                   nchars);
+      str = JSLinearString::newValidLength<CanGC, char16_t>(cx, &owned, gcHeap);
     }
-    Rooted<JSString::OwnedChars<char16_t>> owned(cx, std::move(buffer), nchars);
-    return JSLinearString::newValidLength<CanGC, char16_t>(cx, &owned, gcHeap);
+  } else {
+    str = latin1 ? readStringImpl<Latin1Char>(nchars, atomize)
+                 : readStringImpl<char16_t>(nchars, atomize);
   }
 
-  return latin1 ? readStringImpl<Latin1Char>(nchars, atomize)
-                : readStringImpl<char16_t>(nchars, atomize);
+  if (!str) {
+    return nullptr;
+  }
+
+  // Foxhound: writeString appends a trailing <SCTAG_TAINT, rangeCount> block
+  // for tainted strings. Peek for it (untainted strings emit nothing) and, if
+  // present, consume it and apply the taint. setTaint() safely no-ops on atoms
+  // and empty strings, but we still drain the bytes to keep the stream in sync.
+  // The canPeek() guard is essential: without it, an untainted string that is
+  // the last value in the buffer would make getPair() read past the end and
+  // raise a spurious "truncated" error.
+  uint32_t taintTag = 0, rangeCount = 0;
+  if (in.tell().canPeek() && in.getPair(&taintTag, &rangeCount) &&
+      taintTag == SCTAG_TAINT) {
+    if (!in.readPair(&taintTag, &rangeCount)) {
+      return nullptr;
+    }
+    SafeStringTaint taint;
+    for (uint32_t i = 0; i < rangeCount; ++i) {
+      uint32_t begin = 0, end = 0;
+      TaintFlow flow;
+      if (!ReadScU32(in, &begin) || !ReadScU32(in, &end) ||
+          !ReadScTaintFlow(in, &flow)) {
+        return nullptr;
+      }
+      taint.append(TaintRange(begin, end, std::move(flow)));
+    }
+    str->setTaint(context(), taint);
+  }
+
+  return str;
 }
 
 [[nodiscard]] bool JSStructuredCloneReader::readUint32(uint32_t* num) {
