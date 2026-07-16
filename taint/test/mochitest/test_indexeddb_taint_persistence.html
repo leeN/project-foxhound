@@ -1,0 +1,56 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>IndexedDB taint persistence (structured-clone blob)</title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css"/>
+    <script>
+      // IndexedDB stores values as structured-clone blobs in its backing store
+      // and deserializes them on every get(). It applies no taint source of its
+      // own, so a value that reads back tainted proves the taint survived the
+      // persisted structured-clone blob (this is the SCTAG_TAINT path in the
+      // DifferentProcess/persistent scope). We close and reopen the database
+      // between the write and the read to force the value to come from the
+      // backing store rather than any open-transaction state.
+      function openDB() {
+        return new Promise((resolve, reject) => {
+          const req = indexedDB.open("taint-persist-db", 1);
+          req.onupgradeneeded = (e) => {
+            e.target.result.createObjectStore("store");
+          };
+          req.onsuccess = (e) => resolve(e.target.result);
+          req.onerror = () => reject(req.error);
+        });
+      }
+
+      add_task(async function idb_taint_persistence() {
+        let db = await openDB();
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction("store", "readwrite");
+          tx.objectStore("store").put(String.tainted("idbsecret", "idb-src"), "k");
+          tx.oncomplete = resolve;
+          tx.onerror = () => reject(tx.error);
+        });
+        db.close();
+
+        db = await openDB();
+        const v = await new Promise((resolve, reject) => {
+          const tx = db.transaction("store", "readonly");
+          const req = tx.objectStore("store").get("k");
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+        db.close();
+
+        SimpleTest.info("idb value = " + v + " taint = " + JSON.stringify(v.taint));
+        ok(v === "idbsecret", "value round-trips");
+        // No source is applied by IndexedDB, so being tainted at all proves the
+        // structured-clone blob preserved it.
+        check_tainted(v);
+        check_taint_source(v, "idb-src");
+      });
+    </script>
+  </head>
+  <body></body>
+</html>
