@@ -1,0 +1,33 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>local/sessionStorage taint propagation</title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css"/>
+    <script>
+      // getItem is itself a taint source (applied via overlay), so a value read
+      // back is always tainted regardless of propagation. The real question is
+      // whether the ORIGINAL source we set survives at the root of the flow --
+      // that only happens if the value's taint made it through the store round
+      // trip. check_taint_source() checks flow[last] (the root) == given source.
+
+      add_task(async function local_storage_propagation() {
+        localStorage.setItem("lskey", String.tainted("lsvalue", "ls-src"));
+        const v = localStorage.getItem("lskey");
+        SimpleTest.info("localStorage taint = " + JSON.stringify(v.taint));
+        check_tainted(v);
+        check_taint_source(v, "ls-src");
+      });
+
+      add_task(async function session_storage_propagation() {
+        sessionStorage.setItem("sskey", String.tainted("ssvalue", "ss-src"));
+        const v = sessionStorage.getItem("sskey");
+        SimpleTest.info("sessionStorage taint = " + JSON.stringify(v.taint));
+        check_tainted(v);
+        check_taint_source(v, "ss-src");
+      });
+    </script>
+  </head>
+  <body></body>
+</html>
