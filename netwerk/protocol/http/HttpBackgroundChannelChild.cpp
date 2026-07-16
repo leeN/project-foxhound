@@ -213,13 +213,14 @@ IPCResult HttpBackgroundChannelChild::RecvOnStartRequest(
 IPCResult HttpBackgroundChannelChild::RecvOnTransportAndData(
     const nsresult& aChannelStatus, const nsresult& aTransportStatus,
     const uint64_t& aOffset, const uint32_t& aCount, const nsACString& aData,
-    const nsACString& aTaint,
     const bool& aDataFromSocketProcess,
     const TimeStamp& aOnDataAvailableStart) {
   RefPtr<HttpBackgroundChannelChild> self = this;
+  // Foxhound: copying aData into an nsCString preserves its taint, which now
+  // travels with the string instead of in a separate parameter.
   std::function<void()> callProcessOnTransportAndData =
       [self, aChannelStatus, aTransportStatus, aOffset, aCount,
-       data = nsCString(aData), taint = nsCString(aTaint), aDataFromSocketProcess,
+       data = nsCString(aData), aDataFromSocketProcess,
        aOnDataAvailableStart]() {
         LOG(
             ("HttpBackgroundChannelChild::RecvOnTransportAndData [this=%p, "
@@ -248,7 +249,7 @@ IPCResult HttpBackgroundChannelChild::RecvOnTransportAndData(
         }
 
         self->mChannelChild->ProcessOnTransportAndData(
-            aChannelStatus, aTransportStatus, aOffset, aCount, data, taint,
+            aChannelStatus, aTransportStatus, aOffset, aCount, data,
             aOnDataAvailableStart);
       };
 

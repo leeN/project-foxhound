@@ -65,7 +65,6 @@ class HttpBackgroundChannelChild final : public PHttpBackgroundChannelChild {
                                    const uint64_t& aOffset,
                                    const uint32_t& aCount,
                                    const nsACString& aData,
-                                   const nsACString& aTaint,
                                    const bool& aDataFromSocketProcess,
                                    const TimeStamp& aOnDataAvailableStart);
 

@@ -48,6 +48,9 @@
 #include "nsString.h"
 #include "nsTArray.h"
 #include "nsTHashSet.h"
+// Foxhound: ParamTraits for the taint data structures, used below to carry a
+// string's taint across process boundaries.
+#include "TaintIPCUtils.h"
 
 // XXX Includes that are only required by implementations which could be moved
 // to the cpp file.
@@ -93,6 +96,10 @@ struct ParamTraits<nsTSubstring<T>> {
 
     WriteSequenceParam<const T&>(aWriter, aParam.BeginReading(),
                                  aParam.Length());
+
+    // Foxhound: carry the string's taint alongside its characters so that it
+    // survives the trip across the process boundary.
+    WriteParam(aWriter, aParam.Taint());
   }
 
   static bool Read(MessageReader* aReader, paramType* aResult) {
@@ -106,11 +113,16 @@ struct ParamTraits<nsTSubstring<T>> {
       return true;
     }
 
-    return ReadSequenceParam<T>(aReader, [&](uint32_t aLength) -> T* {
-      T* data = nullptr;
-      aResult->GetMutableData(&data, aLength);
-      return data;
-    });
+    if (!ReadSequenceParam<T>(aReader, [&](uint32_t aLength) -> T* {
+          T* data = nullptr;
+          aResult->GetMutableData(&data, aLength);
+          return data;
+        })) {
+      return false;
+    }
+
+    // Foxhound: restore the taint that was written alongside the characters.
+    return ReadParam(aReader, &aResult->Taint());
   }
 };
 

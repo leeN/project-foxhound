@@ -621,7 +621,6 @@ void HttpChannelChild::DoOnStartRequest(nsIRequest* aRequest) {
 void HttpChannelChild::ProcessOnTransportAndData(
     const nsresult& aChannelStatus, const nsresult& aTransportStatus,
     const uint64_t& aOffset, const uint32_t& aCount, const nsACString& aData,
-    const nsACString& aTaint,
     const TimeStamp& aOnDataAvailableStartTime) {
   LOG(("HttpChannelChild::ProcessOnTransportAndData [this=%p]\n", this));
   MOZ_ASSERT(OnSocketThread());
@@ -629,12 +628,14 @@ void HttpChannelChild::ProcessOnTransportAndData(
       [self = UnsafePtr<HttpChannelChild>(this)]() {
         return self->GetODATarget();
       },
+      // Foxhound: the nsCString copy of aData keeps its taint, which arrived
+      // with the string over IPC rather than in a separate parameter.
       [self = UnsafePtr<HttpChannelChild>(this), aChannelStatus,
-       aTransportStatus, aOffset, aCount, aData = nsCString(aData), aTaint = nsCString(aTaint),
+       aTransportStatus, aOffset, aCount, aData = nsCString(aData),
        aOnDataAvailableStartTime]() {
         self->mOnDataAvailableStartTime = aOnDataAvailableStartTime;
         self->OnTransportAndData(aChannelStatus, aTransportStatus, aOffset,
-                                 aCount, aData, aTaint);
+                                 aCount, aData);
       }));
 }
 
@@ -642,8 +643,7 @@ void HttpChannelChild::OnTransportAndData(const nsresult& aChannelStatus,
                                           const nsresult& aTransportStatus,
                                           const uint64_t& aOffset,
                                           const uint32_t& aCount,
-                                          const nsACString& aData,
-                                          const nsACString& aTaint) {
+                                          const nsACString& aData) {
   LOG(("HttpChannelChild::OnTransportAndData [this=%p]\n", this));
 
   if (!mCanceled && NS_SUCCEEDED(mStatus)) {
@@ -701,8 +701,10 @@ void HttpChannelChild::OnTransportAndData(const nsresult& aChannelStatus,
   // support only reading part of the data, allowing later calls to read the
   // rest.
   nsCOMPtr<nsIInputStream> stringStream;
-  std::string taintData(aTaint.BeginReading());
-  SafeStringTaint taint(ParseStringTaintForE2E(taintData));
+  // Foxhound: the taint travelled with |aData| over IPC (see
+  // ParamTraits<nsTSubstring>), already offset to [0, aCount). Use it directly
+  // instead of parsing a separately-serialized taint parameter.
+  SafeStringTaint taint(aData.Taint().safeSubTaint(0, aCount));
   nsresult rv =
       NS_NewByteInputStream(getter_AddRefs(stringStream),
                             Span(aData).To(aCount), NS_ASSIGNMENT_DEPEND, taint);

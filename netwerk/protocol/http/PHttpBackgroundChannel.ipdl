@@ -31,12 +31,14 @@ child:
 
   // Combines a single OnDataAvailable and its associated OnProgress &
   // OnStatus calls into one IPDL message
+  // Foxhound: the taint of |data| now rides along with the string itself
+  // (see ParamTraits<nsTSubstring>), so no separate serialized taint parameter
+  // is needed here anymore.
   async OnTransportAndData(nsresult  channelStatus,
                            nsresult  transportStatus,
                            uint64_t  offset,
                            uint32_t  count,
                            nsCString data,
-                           nsCString taint,
                            bool dataFromSocketProcess,
                            TimeStamp onDataAvailableStart);
 

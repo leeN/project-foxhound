@@ -11,7 +11,8 @@ Library('taint')
 EXPORTS += [
     'json.hpp',
     'md5_utils.h',
-    'Taint.h'
+    'Taint.h',
+    'TaintIPCUtils.h'
 ]
 
 SOURCES += [

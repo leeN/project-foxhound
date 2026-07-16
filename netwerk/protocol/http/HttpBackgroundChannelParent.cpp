@@ -227,10 +227,11 @@ bool HttpBackgroundChannelParent::OnTransportAndData(
        aTransportStatus,
        aOnDataAvailableStart](const nsDependentCSubstring& aData,
                               uint64_t aOffset, uint32_t aCount) {
-        nsDependentCSubstring taint;
-        taint.Append(SerializeStringTaintForE2E(aData.Taint().safeSubTaint(aOffset, aOffset + aCount)));
+        // Foxhound: |aData| is a substring view whose taint is already offset
+        // to [0, aCount) (see nsTDependentSubstring::Rebind). That taint now
+        // travels with the string over IPC, so we just send |aData| directly.
         return self->SendOnTransportAndData(aChannelStatus, aTransportStatus,
-                                            aOffset, aCount, aData, taint, false,
+                                            aOffset, aCount, aData, false,
                                             aOnDataAvailableStart);
       };
 

@@ -31,12 +31,10 @@ mozilla::ipc::IPCResult BackgroundDataBridgeChild::RecvOnTransportAndData(
     Close();
     return IPC_OK();
   }
-  #if (DEBUG_E2E_TAINTING)
-    puts("++++ sending empty taint over data bridge ++++");
-  #endif
-  nsDependentCSubstring taint;
+  // Foxhound: |data| carries its own taint across IPC now, so the data-bridge
+  // path no longer needs a separate taint parameter.
   return mBgChild->RecvOnTransportAndData(NS_OK, NS_NET_STATUS_RECEIVING_FROM,
-                                          offset, count, data, taint, true,
+                                          offset, count, data, true,
                                           aOnDataAvailableStartTime);
 }
 
