@@ -1,0 +1,39 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Cookie store taint propagation</title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css"/>
+    <script>
+      // Reading document.cookie is itself a taint source (applied via overlay),
+      // so the result is always tainted. The real question is whether the
+      // ORIGINAL source we set survives at the root of some range's flow -- that
+      // only happens if the value's taint made it through the store round trip
+      // (document.cookie crosses the UTF-16 <-> UTF-8 boundary twice).
+      function hasSourceAtRoot(str, src) {
+        for (const range of (str.taint || [])) {
+          const flow = range.flow;
+          if (flow.length && flow[flow.length - 1].operation === src) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      add_task(async function cookie_taint_propagation() {
+        document.cookie = String.tainted("sctaint=secretvalue", "cookie-src");
+
+        const all = document.cookie;
+        SimpleTest.info("document.cookie = " + all);
+        SimpleTest.info("taint = " + JSON.stringify(all.taint));
+
+        ok(all.includes("secretvalue"), "cookie value present in document.cookie");
+        check_tainted(all);
+        ok(hasSourceAtRoot(all, "cookie-src"),
+           "original taint source survived the cookie store round trip");
+      });
+    </script>
+  </head>
+  <body></body>
+</html>

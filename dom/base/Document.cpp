@@ -6886,6 +6886,11 @@ void Document::GetCookie(nsAString& aCookie, ErrorResult& aRv) {
   // because it assumes that the input is valid.
   UTF_8_ENCODING->DecodeWithoutBOMHandling(cookieString, aCookie);
 
+  // Foxhound: the decode does not carry taint. Copy it from the composed
+  // (UTF-8) cookie string so a stored value's taint survives the round trip,
+  // then overlay the document.cookie source on top. ASCII offsets coincide.
+  aCookie.AssignTaint(cookieString.Taint());
+
   // Foxhound: document.cookie source.
   MarkTaintSource(aCookie, "document.cookie");
 }
@@ -6928,6 +6933,10 @@ void Document::SetCookie(const nsAString& aCookieString, ErrorResult& aRv) {
   ReportTaintSink(aCookieString, "document.cookie");
 
   NS_ConvertUTF16toUTF8 cookieString(aCookieString);
+  // Foxhound: NS_ConvertUTF16toUTF8 does not carry taint, which would drop the
+  // value's taint before it ever reaches the cookie store. Copy it across.
+  // Cookie strings are ASCII per RFC 6265, so UTF-16 and UTF-8 offsets coincide.
+  cookieString.AssignTaint(aCookieString.Taint());
 
   nsCOMPtr<nsIURI> documentURI;
   nsAutoCString baseDomain;

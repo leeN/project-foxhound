@@ -847,10 +847,14 @@ void CookieCommons::ComposeCookieString(nsTArray<RefPtr<Cookie>>& aCookieList,
 
       if (!cookie->Name().IsEmpty()) {
         // we have a name and value - write both
-        aCookieString += cookie->Name() + "="_ns + cookie->Value();
+        // Foxhound: build via Append() rather than the tuple operator+, which
+        // does not propagate taint; Append() does (see nsTSubstring::Append).
+        aCookieString.Append(cookie->Name());
+        aCookieString.Append('=');
+        aCookieString.Append(cookie->Value());
       } else {
         // just write value
-        aCookieString += cookie->Value();
+        aCookieString.Append(cookie->Value());
       }
     }
   }

@@ -342,6 +342,25 @@ void CookieParser::ParseAttributes(nsCString& aCookieHeader,
     mCookieData.value() = tokenString;
   }
 
+  // Foxhound: GetTokenValue rebinds the name/value as dependent substrings via
+  // raw pointers, which drops taint. Re-derive the taint from the (tainted)
+  // cookie header by byte offset so the value's taint survives into the store.
+  if (aCookieHeader.isTainted()) {
+    const char* base = aCookieHeader.BeginReading();
+    const nsDependentCSubstring& valueToken =
+        equalsFound ? tokenValue : tokenString;
+    if (!valueToken.IsEmpty()) {
+      size_t off = valueToken.BeginReading() - base;
+      mCookieData.value().AssignTaint(aCookieHeader.Taint().safeSubTaint(
+          uint32_t(off), uint32_t(off + valueToken.Length())));
+    }
+    if (equalsFound && !tokenString.IsEmpty()) {
+      size_t off = tokenString.BeginReading() - base;
+      mCookieData.name().AssignTaint(aCookieHeader.Taint().safeSubTaint(
+          uint32_t(off), uint32_t(off + tokenString.Length())));
+    }
+  }
+
   // extract remaining attributes
   while (cookieStart != cookieEnd) {
     GetTokenValue(cookieStart, cookieEnd, tokenString, tokenValue, equalsFound);
