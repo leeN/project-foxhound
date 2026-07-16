@@ -979,6 +979,10 @@ bool nsTSubstring<T>::Append(const substring_tuple_type& aTuple,
     return false;
   }
   aTuple.WriteTo(this->mData + oldLen, tupleLength);
+  // Foxhound: carry the tuple's combined taint onto the appended region.
+  // Without this, `str += a + b + c` (operator+= on a substring tuple) would
+  // drop taint, unlike Assign(tuple)/Replace(tuple) which already propagate it.
+  this->mTaint.concat(aTuple.Taint(), oldLen);
   FinishBulkWriteImpl(newLen.value());
   return true;
 }
