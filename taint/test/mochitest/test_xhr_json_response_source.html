@@ -1,0 +1,88 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>
+      Check that string values parsed out of an XMLHttpRequest JSON response are
+      tainted with the 'XMLHttpRequest.response(json)' source, producing a flow
+      that contains it.
+    </title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css"/>
+    <script>
+      function check_flow_source(value, sourceName) {
+        check_tainted(value);
+        const flow = value.taint[0].flow;
+        const ops = flow.map((o) => o.operation);
+        SimpleTest.ok(
+          flow.some((o) => o.source && o.operation === sourceName),
+          `flow must contain the '${sourceName}' source node (flow: ${ops})`
+        );
+      }
+
+      // xhr_server.sjs?json responds with {a,b,txt:"<b>hi</b>"}. With
+      // responseType 'json' the parsed string field must carry the JSON
+      // response source.
+      add_task(async function test_xhr_json_response_source() {
+        const value = await new Promise((resolve, reject) => {
+          const request = new XMLHttpRequest();
+          request.responseType = "json";
+          request.onload = () => resolve(request.response.txt);
+          request.onerror = () => reject(new Error("XHR failed"));
+          request.open(
+            "GET",
+            "/tests/taint/test/mochitest/xhr_server.sjs?json",
+            true
+          );
+          request.send();
+        });
+        check_flow_source(value, "XMLHttpRequest.response(json)");
+      });
+
+      // The tainted JSON value flows into an innerHTML sink; the reported flow
+      // retains the JSON response source.
+      add_task(async function test_xhr_json_response_into_sink_flow() {
+        const value = await new Promise((resolve, reject) => {
+          const request = new XMLHttpRequest();
+          request.responseType = "json";
+          request.onload = () => resolve(request.response.txt);
+          request.onerror = () => reject(new Error("XHR failed"));
+          request.open(
+            "GET",
+            "/tests/taint/test/mochitest/xhr_server.sjs?json",
+            true
+          );
+          request.send();
+        });
+
+        const detail = await new Promise((resolve, reject) => {
+          const onReport = (e) => {
+            window.removeEventListener("__taintreport", onReport, true);
+            resolve(e.detail);
+          };
+          window.addEventListener("__taintreport", onReport, true);
+          try {
+            document.createElement("div").innerHTML = value;
+          } catch (ex) {
+            window.removeEventListener("__taintreport", onReport, true);
+            reject(ex);
+          }
+        });
+
+        SimpleTest.is(detail.sink, "innerHTML", "Report sink must be 'innerHTML'");
+        const ops = detail.str.taint[0].flow.map((o) => o.operation);
+        SimpleTest.ok(
+          detail.str.taint[0].flow.some(
+            (o) => o.source && o.operation === "XMLHttpRequest.response(json)"
+          ),
+          `flow must retain the JSON response source (flow: ${ops})`
+        );
+      });
+    </script>
+  </head>
+  <body>
+    <p id="display"></p>
+    <div id="content" style="display: none"></div>
+    <pre id="test"></pre>
+  </body>
+</html>

@@ -29,6 +29,67 @@
           check_tainted(document.getElementById("review").value);
       });
 
+      // The flow of a read value must contain a source node for the given
+      // operation. (The very last node can be the getElementById lookup rather
+      // than the value source, so check for containment instead of position.)
+      function check_flow_source(value, sourceName) {
+          check_tainted(value);
+          const flow = value.taint[0].flow;
+          const ops = flow.map((o) => o.operation);
+          ok(
+              flow.some((o) => o.source && o.operation === sourceName),
+              `flow must contain the '${sourceName}' source node (flow: ${ops})`
+          );
+      }
+
+      // The taint of an input's value must be sourced at 'input.value'.
+      add_task(async function test_input_value_source_operation() {
+          const value = document.getElementById("fname").value;
+          check_flow_source(value, "input.value");
+      });
+
+      // Likewise a textarea's value must be sourced at 'textarea.value'.
+      add_task(async function test_textarea_value_source_operation() {
+          const value = document.getElementById("review").value;
+          check_flow_source(value, "textarea.value");
+      });
+
+      // Run `doSink` and resolve with the detail of the `__taintreport`
+      // CustomEvent the sink fires synchronously.
+      function captureSinkReport(doSink) {
+          return new Promise((resolve, reject) => {
+              const onReport = (e) => {
+                  window.removeEventListener("__taintreport", onReport, true);
+                  resolve(e.detail);
+              };
+              window.addEventListener("__taintreport", onReport, true);
+              try {
+                  doSink();
+              } catch (ex) {
+                  window.removeEventListener("__taintreport", onReport, true);
+                  reject(ex);
+              }
+          });
+      }
+
+      // A full source -> sink flow: the input value flows into an innerHTML
+      // sink and the reported flow contains the 'input.value' source node.
+      add_task(async function test_input_value_into_sink_flow() {
+          const value = document.getElementById("fname").value;
+          const div = document.createElement("div");
+          const detail = await captureSinkReport(() => {
+              div.innerHTML = value;
+          });
+          is(detail.sink, "innerHTML", "Report sink must be 'innerHTML'");
+          const ops = detail.str.taint[0].flow.map((o) => o.operation);
+          ok(
+              detail.str.taint[0].flow.some(
+                  (o) => o.source && o.operation === "input.value"
+              ),
+              `flow must retain the 'input.value' source (flow: ${ops})`
+          );
+      });
+
     </script>
   </head>
   <body>

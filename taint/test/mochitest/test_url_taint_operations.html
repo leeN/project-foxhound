@@ -1,0 +1,129 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>
+      Check that URL / URLSearchParams taint propagation operations show up as
+      nodes in the taint flow of the produced strings.
+    </title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css"/>
+    <script>
+      // The operation nodes recorded by Foxhound when a tainted value passes
+      // through a URL / URLSearchParams API. Each produced string must carry a
+      // flow that contains the corresponding propagation node.
+      function flowOps(str) {
+        check_tainted(str);
+        return str.taint[0].flow.map((o) => o.operation);
+      }
+
+      function assertFlowHas(str, op) {
+        const ops = flowOps(str);
+        SimpleTest.ok(
+          ops.includes(op),
+          `taint flow of '${str}' must contain the '${op}' node (flow: ${ops})`
+        );
+      }
+
+      // A URL built from a fully tainted string keeps its taint and records a
+      // 'URL' propagation node.
+      add_task(async function test_URL_constructor() {
+        const url = new URL(
+          String.tainted("https://example.com/a/b?x=1&y=2#frag", "TestSource")
+        );
+        assertFlowHas(url.href, "URL");
+      });
+
+      // The individual component getters each add their own propagation node.
+      add_task(async function test_URL_pathname() {
+        const url = new URL(
+          String.tainted("https://example.com/some/path?x=1#frag", "TestSource")
+        );
+        assertFlowHas(url.pathname, "URL.pathname");
+      });
+
+      add_task(async function test_URL_search() {
+        const url = new URL(
+          String.tainted("https://example.com/p?payload=abc&y=2#frag", "TestSource")
+        );
+        assertFlowHas(url.search, "URL.search");
+      });
+
+      add_task(async function test_URL_hash() {
+        const url = new URL(
+          String.tainted("https://example.com/p?x=1#the-fragment", "TestSource")
+        );
+        assertFlowHas(url.hash, "URL.hash");
+      });
+
+      // URL.parse (the static parser) records a 'URL.parse' node.
+      add_task(async function test_URL_parse() {
+        const url = URL.parse(
+          String.tainted("https://example.com/parsed/path?x=1#frag", "TestSource")
+        );
+        SimpleTest.ok(url, "URL.parse must return a URL for a valid input");
+        assertFlowHas(url.pathname, "URL.parse");
+      });
+
+      // URLSearchParams.get records a 'URLSearchParams.get' node.
+      add_task(async function test_URLSearchParams_get() {
+        const sp = new URLSearchParams(
+          String.tainted("payload=abcd&sp=x", "TestSource")
+        );
+        assertFlowHas(sp.get("payload"), "URLSearchParams.get");
+      });
+
+      // URLSearchParams.getAll records a 'URLSearchParams.getAll' node.
+      add_task(async function test_URLSearchParams_getAll() {
+        const sp = new URLSearchParams(
+          String.tainted("k=one&k=two", "TestSource")
+        );
+        const all = sp.getAll("k");
+        SimpleTest.ok(all.length > 0, "getAll must return values");
+        assertFlowHas(all[0], "URLSearchParams.getAll");
+      });
+
+      // Appending tainted key/value records 'URLParams(key)' and
+      // 'URLParams(value)' nodes, and serializing records 'URLHelper.Serialize'.
+      add_task(async function test_URLParams_append_and_serialize() {
+        const sp = new URLSearchParams();
+        sp.append(
+          String.tainted("thekey", "TestSource"),
+          String.tainted("thevalue", "TestSource")
+        );
+
+        // The stored value, read back out, went through URLParams(value).
+        assertFlowHas(sp.get("thekey"), "URLParams(value)");
+
+        // Serializing the params records URLHelper.Serialize; the key that was
+        // appended went through URLParams(key).
+        const serialized = sp.toString();
+        const ops = flowOps(serialized);
+        SimpleTest.ok(
+          ops.includes("URLHelper.Serialize"),
+          `serialized params flow must contain 'URLHelper.Serialize' (flow: ${ops})`
+        );
+        SimpleTest.ok(
+          ops.includes("URLParams(key)"),
+          `serialized params flow must contain 'URLParams(key)' (flow: ${ops})`
+        );
+      });
+
+      // An untainted input stays untainted through the same operations.
+      add_task(async function test_untainted_stays_untainted() {
+        const url = new URL("https://example.com/clean?x=1#h");
+        check_untainted(url.pathname);
+        check_untainted(url.search);
+        check_untainted(url.hash);
+        const sp = new URLSearchParams("x=1&y=2");
+        check_untainted(sp.get("x"));
+        check_untainted(sp.toString());
+      });
+    </script>
+  </head>
+  <body>
+    <p id="display"></p>
+    <div id="content" style="display: none"></div>
+    <pre id="test"></pre>
+  </body>
+</html>

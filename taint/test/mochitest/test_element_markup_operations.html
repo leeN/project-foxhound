@@ -1,0 +1,94 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>
+      Check that HTML-markup taint propagation operations (element.innerHTML /
+      element.outerHTML getters, attribute/text serialization encoding, and
+      DOMParser.parseFromString) show up as nodes in the taint flow.
+    </title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css"/>
+    <script>
+      function flowOps(str) {
+        check_tainted(str);
+        return str.taint[0].flow.map((o) => o.operation);
+      }
+
+      function assertFlowHas(str, op) {
+        const ops = flowOps(str);
+        SimpleTest.ok(
+          ops.includes(op),
+          `taint flow of '${str}' must contain the '${op}' node (flow: ${ops})`
+        );
+      }
+
+      // Reading element.innerHTML records an 'element.innerHTML' node.
+      add_task(async function test_element_innerHTML_getter() {
+        const el = document.createElement("div");
+        el.appendChild(
+          document.createTextNode(String.tainted("hello-inner", "TestSource"))
+        );
+        assertFlowHas(el.innerHTML, "element.innerHTML");
+      });
+
+      // Reading element.outerHTML records an 'element.outerHTML' node.
+      add_task(async function test_element_outerHTML_getter() {
+        const el = document.createElement("div");
+        el.appendChild(
+          document.createTextNode(String.tainted("hello-outer", "TestSource"))
+        );
+        assertFlowHas(el.outerHTML, "element.outerHTML");
+      });
+
+      // Serializing an element with a tainted text child runs the tainted text
+      // through the text-fragment encoder ('nsContentUtils::EncodeTextFragment').
+      add_task(async function test_encode_text_fragment() {
+        const el = document.createElement("div");
+        el.appendChild(
+          document.createTextNode(String.tainted("some & <text>", "TestSource"))
+        );
+        assertFlowHas(el.innerHTML, "nsContentUtils::EncodeTextFragment");
+      });
+
+      // Serializing an element with a tainted attribute value runs it through
+      // the attribute encoder ('nsContentUtils::EncodeAttrString').
+      add_task(async function test_encode_attr_string() {
+        const el = document.createElement("div");
+        el.setAttribute(
+          "data-payload",
+          String.tainted('a"b&c', "TestSource")
+        );
+        // outerHTML serializes the element and its attributes.
+        assertFlowHas(el.outerHTML, "nsContentUtils::EncodeAttrString");
+      });
+
+      // Parsing a tainted string with DOMParser records a
+      // 'DOMParser.ParseFromString' node in the taint of the parsed content.
+      add_task(async function test_dom_parser_parse_from_string() {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(
+          String.tainted("<div id='x'>parsed-content</div>", "TestSource"),
+          "text/html"
+        );
+        const parsed = doc.getElementById("x");
+        SimpleTest.ok(parsed, "parsed element must exist");
+        assertFlowHas(parsed.textContent, "DOMParser.ParseFromString");
+      });
+
+      // Untainted markup stays untainted through the same getters.
+      add_task(async function test_untainted_markup_stays_untainted() {
+        const el = document.createElement("div");
+        el.appendChild(document.createTextNode("clean"));
+        el.setAttribute("data-x", "clean");
+        check_untainted(el.innerHTML);
+        check_untainted(el.outerHTML);
+      });
+    </script>
+  </head>
+  <body>
+    <p id="display"></p>
+    <div id="content" style="display: none"></div>
+    <pre id="test"></pre>
+  </body>
+</html>
