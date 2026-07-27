@@ -4390,14 +4390,16 @@ void Element::CloneAnimationsFrom(const Element& aOther) {
 
 void Element::GetInnerHTML(nsAString& aInnerHTML, OOMReporter& aError) {
   GetMarkup(false, aInnerHTML);
-  MarkTaintOperation(aInnerHTML, "element.innerHTML");
+  // Foxhound: record the element read off so the taint flow can reconstruct the
+  // parse->read round-trip faithfully (same XPath argument as element.attribute).
+  MarkTaintOperation(aInnerHTML, "element.innerHTML", this);
 }
 
 void Element::GetInnerHTML(OwningTrustedHTMLOrNullIsEmptyString& aInnerHTML,
                            OOMReporter& aError) {
   nsString& aStr = aInnerHTML.SetAsNullIsEmptyString();
   GetInnerHTML(aStr, aError);
-  MarkTaintOperation(aStr, "element.innerHTML");  
+  MarkTaintOperation(aStr, "element.innerHTML", this);
 }
 
 void Element::SetInnerHTML(const TrustedHTMLOrNullIsEmptyString& aInnerHTML,
@@ -4435,7 +4437,8 @@ void Element::SetInnerHTMLTrusted(const nsAString& aInnerHTML,
 void Element::GetOuterHTML(OwningTrustedHTMLOrNullIsEmptyString& aOuterHTML) {
   nsString& aStr = aOuterHTML.SetAsNullIsEmptyString();
   GetMarkup(true, aStr);
-  MarkTaintOperation(aStr, "element.outerHTML");
+  // Foxhound: record the element read off (see GetInnerHTML above).
+  MarkTaintOperation(aStr, "element.outerHTML", this);
 }
 
 void Element::SetOuterHTML(const TrustedHTMLOrNullIsEmptyString& aOuterHTML,
