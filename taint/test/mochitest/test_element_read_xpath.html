@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>
+      Check that element.innerHTML / element.outerHTML / element.textContent
+      reads record the element's XPath as taint operation arguments[0], the same
+      way element.attribute does (so a taint flow can reconstruct which node a
+      string was read back off).
+    </title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css" />
+
+    <script type="text/javascript">
+      // Parse a tainted fragment and return the parsed document. body.firstChild
+      // is the <div> wrapping the tainted text.
+      function parseTainted() {
+        const tainted = String.tainted("hello");
+        return new DOMParser().parseFromString(
+          "<div>" + tainted + "</div>",
+          "text/html"
+        );
+      }
+
+      // A flow is ordered newest-first (check_taint_source reads the source at
+      // flow[flow.length-1]), so flow[0] is the read we just did.
+      //
+      // Takes the value's `taint` array rather than the value itself: handing a
+      // tainted string to any function records a `function` op, which would become
+      // the flow head instead of the read. MarkTaintedFunctionArguments marks
+      // direct string arguments only, so passing the array is safe.
+      function readOp(taint) {
+        SimpleTest.ok(taint.length > 0, "the read value must be tainted");
+        return taint[0].flow[0];
+      }
+
+      // The read must record the element's XPath (a "/"-rooted location path
+      // naming the element read off) as its first argument. On an unpatched build
+      // these reads carried no arguments, so this fails loudly there.
+      function assertXPathArg(op, tag) {
+        SimpleTest.ok(
+          op.arguments && op.arguments.length >= 1,
+          `${op.operation} must record an argument, got [${op.arguments}]`
+        );
+        const xpath = op.arguments[0];
+        SimpleTest.ok(
+          typeof xpath === "string" && xpath.startsWith("/"),
+          `${op.operation} arguments[0] must be an XPath: ${xpath}`
+        );
+        SimpleTest.ok(
+          new RegExp(tag, "i").test(xpath),
+          `${op.operation} XPath must name the <${tag}> read off: ${xpath}`
+        );
+      }
+
+      add_task(async function test_innerHTML_records_xpath() {
+        const div = parseTainted().body.firstChild;
+        const op = readOp(div.innerHTML.taint);
+        SimpleTest.is(op.operation, "element.innerHTML");
+        assertXPathArg(op, "div");
+      });
+
+      add_task(async function test_outerHTML_records_xpath() {
+        const div = parseTainted().body.firstChild;
+        const op = readOp(div.outerHTML.taint);
+        SimpleTest.is(op.operation, "element.outerHTML");
+        assertXPathArg(op, "div");
+      });
+
+      add_task(async function test_textContent_records_xpath() {
+        const div = parseTainted().body.firstChild;
+        const op = readOp(div.textContent.taint);
+        SimpleTest.is(op.operation, "element.textContent");
+        assertXPathArg(op, "div");
+      });
+
+      // Reading the same property off a different element records that element's
+      // path, so distinct nodes are distinguishable in the flow.
+      add_task(async function test_xpath_identifies_the_node() {
+        const doc = parseTainted();
+        const divOp = readOp(doc.body.firstChild.innerHTML.taint);
+        const bodyOp = readOp(doc.body.innerHTML.taint);
+        SimpleTest.isnot(
+          divOp.arguments[0],
+          bodyOp.arguments[0],
+          "innerHTML read off <div> and <body> record different XPaths"
+        );
+        assertXPathArg(bodyOp, "body");
+      });
+    </script>
+  </head>
+
+  <body></body>
+</html>
