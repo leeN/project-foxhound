@@ -94,6 +94,7 @@
 #include "nsLayoutUtils.h"
 #include "nsNodeInfoManager.h"
 #include "nsPIDOMWindow.h"
+#include "nsTaintingUtils.h"
 #include "nsWindowSizes.h"
 #include "nsWrapperCacheInlines.h"
 #include "xpcpublic.h"
@@ -1225,6 +1226,10 @@ void FragmentOrElement::GetTextContentInternal(nsAString& aTextContent,
   if (!nsContentUtils::GetNodeTextContent(this, true, aTextContent, fallible)) {
     aError.ReportOOM();
   }
+  // Foxhound: record the element the text was read off so the taint flow can
+  // reconstruct the read faithfully (same XPath argument as element.attribute).
+  // A textContent read strips markup, so this must not be treated as identity.
+  MarkTaintOperation(aTextContent, "element.textContent", this);
 }
 
 void FragmentOrElement::SetTextContentInternal(
