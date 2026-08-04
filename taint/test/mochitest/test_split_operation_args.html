@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Test that split records its separator and the element's index</title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css" />
+
+    <script type="text/javascript">
+      // String.prototype.split has three engine paths, and they used to disagree about what
+      // they record. SplitHelper (general separator) and CharSplitHelper (split("")) both
+      // extend each substring with { separator, index }; SplitSingleCharHelper — the fast
+      // path taken for a one-character separator — extended them with a bare
+      // TaintOperation("split") carrying NO arguments.
+      //
+      // Both arguments are what make the step reproducible. A consumer replaying a flow has
+      // to know WHICH piece of the split the taint followed and WHAT the string was cut on;
+      // with neither, it can only drop the step — reconstructing a value the page never had,
+      // because the uncut string carries content the split removed — or discard the flow.
+      // So assert the arguments on every path, and in particular that the one-character
+      // separator agrees with the multi-character one.
+      function lastSplitOp(str) {
+        SimpleTest.ok(str.taint.length > 0, "the substring must still be tainted");
+        const flow = str.taint[0].flow;
+        const ops = flow.filter((o) => o.operation === "split");
+        SimpleTest.ok(ops.length > 0, "the flow must carry a split operation");
+        return ops[0];
+      }
+
+      add_task(async function test_single_char_separator() {
+        // The fast path: one-character separator, several occurrences.
+        const parts = String.tainted("aa|bb|cc", "t1").split("|");
+        SimpleTest.is(parts.length, 3);
+        parts.forEach((part, index) => {
+          const op = lastSplitOp(part);
+          SimpleTest.is(op.arguments.length, 2, "separator and index are both recorded");
+          SimpleTest.is(op.arguments[0], "|", "the separator the string was cut on");
+          SimpleTest.is(op.arguments[1], String(index), "the index of this element");
+        });
+      });
+
+      add_task(async function test_multi_char_separator() {
+        // The general path, which already recorded both — asserted here so the two cannot
+        // drift apart again.
+        const parts = String.tainted("aa###bb###cc", "t1").split("###");
+        SimpleTest.is(parts.length, 3);
+        parts.forEach((part, index) => {
+          const op = lastSplitOp(part);
+          SimpleTest.is(op.arguments.length, 2);
+          SimpleTest.is(op.arguments[0], "###");
+          SimpleTest.is(op.arguments[1], String(index));
+        });
+      });
+
+      add_task(async function test_empty_separator() {
+        // split("") goes through CharSplitHelper: one element per character, empty separator.
+        const parts = String.tainted("abc", "t1").split("");
+        SimpleTest.is(parts.length, 3);
+        parts.forEach((part, index) => {
+          const op = lastSplitOp(part);
+          SimpleTest.is(op.arguments.length, 2);
+          SimpleTest.is(op.arguments[0], "", "the empty separator is recorded as such");
+          SimpleTest.is(op.arguments[1], String(index));
+        });
+      });
+
+      add_task(async function test_separator_absent_from_string() {
+        // Zero occurrences returns the whole string in a one-element array. Whatever the
+        // engine records here, the index must not claim the taint came from a later piece.
+        const parts = String.tainted("abc", "t1").split("|");
+        SimpleTest.is(parts.length, 1);
+        SimpleTest.ok(parts[0].taint.length > 0, "the single element stays tainted");
+      });
+
+      add_task(async function test_tail_element_index() {
+        // The tail substring (after the last separator) is appended outside the loop, which
+        // is exactly where an index computed separately could go wrong.
+        const parts = String.tainted("x|y|tail", "t1").split("|");
+        const op = lastSplitOp(parts[parts.length - 1]);
+        SimpleTest.is(op.arguments[1], "2", "the tail carries its real index, not 0");
+      });
+    </script>
+  </head>
+  <body></body>
+</html>
