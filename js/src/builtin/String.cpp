@@ -4333,7 +4333,18 @@ static MOZ_ALWAYS_INLINE ArrayObject* SplitSingleCharHelper(
   }
   splits->ensureDenseInitializedLength(0, count + 1);
 
-  TaintOperation op = TaintOperationFromContext(cx, "split");
+  // Foxhound: record the separator and the element's index, as SplitHelper and
+  // CharSplitHelper already do. This fast path used to extend every substring with a
+  // bare TaintOperation("split") carrying NO arguments, which loses both: a consumer
+  // then cannot tell which piece of the split the taint followed, nor what the string
+  // was cut on. The two are what make the step reproducible — `s.split(sep)[index]` —
+  // and without them an analysis either drops the step (reconstructing a value the page
+  // never had, uncut) or has to discard the flow.
+  //   The location is still computed once, outside the loop: walking the stack is the
+  // expensive part of building the operation, and it is identical for every substring.
+  // Only the per-element arguments are built inside.
+  TaintLocation loc = TaintLocationFromContext(cx);
+  std::u16string sep = taintarg_char(cx, patCh);
 
   // Add substrings.
   uint32_t splitsIndex = 0;
@@ -4347,7 +4358,8 @@ static MOZ_ALWAYS_INLINE ArrayObject* SplitSingleCharHelper(
       }
       // Foxhound: extend taint flow
       if(sub->isTainted()) {
-        sub->taint().extend(op);
+        sub->taint().extend(TaintOperation("split", loc,
+                                           { sep, taintarg(cx, int32_t(splitsIndex)) }));
       }
 
       splits->initDenseElement(splitsIndex++, StringValue(sub));
@@ -4364,7 +4376,8 @@ static MOZ_ALWAYS_INLINE ArrayObject* SplitSingleCharHelper(
   }
   // Foxhound: extend taint flow
   if(sub->isTainted()) {
-    sub->taint().extend(op);
+    sub->taint().extend(TaintOperation("split", loc,
+                                       { sep, taintarg(cx, int32_t(splitsIndex)) }));
   }
 
   splits->initDenseElement(splitsIndex++, StringValue(sub));
