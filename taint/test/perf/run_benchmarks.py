@@ -128,15 +128,22 @@ def measure(harness, binary, driver, timeout):
         shutil.rmtree(profile, ignore_errors=True)
 
 
+def _patch_in_place(path, patch):
+    with open(path, encoding="utf-8", errors="surrogateescape") as f:
+        content = f.read()
+    with open(path, "w", encoding="utf-8", errors="surrogateescape") as f:
+        f.write(patch(content))
+
+
 def stage_benchmark(spec, workdir):
-    """Copy the benchmark somewhere writable and patch its driver."""
-    dest = os.path.join(workdir, os.path.basename(spec["path"]))
+    """Copy the benchmark somewhere writable and patch its driver. The directory
+    is named after the benchmark rather than after its path, because two
+    benchmarks can be two driver pages of the same suite."""
+    dest = os.path.join(workdir, spec["name"])
     shutil.copytree(spec["abspath"], dest)
-    driver_path = os.path.join(dest, spec["driver"])
-    with open(driver_path, encoding="utf-8", errors="surrogateescape") as f:
-        html = f.read()
-    with open(driver_path, "w", encoding="utf-8", errors="surrogateescape") as f:
-        f.write(spec["patch"](html))
+    _patch_in_place(os.path.join(dest, spec["driver"]), spec["patch"])
+    for name, patch in spec.get("patch_files", {}).items():
+        _patch_in_place(os.path.join(dest, name), patch)
     return dest
 
 

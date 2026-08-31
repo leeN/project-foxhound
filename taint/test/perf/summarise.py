@@ -18,6 +18,24 @@ def per_round_totals(runs):
     return [sum(st.mean(v) for v in r.values()) for r in runs]
 
 
+def per_round_subtest(runs, subtest):
+    """One number per round for a single sub-test, skipping rounds it is absent
+    from. A suite can drop a sub-test on a run without failing the round."""
+    return [st.mean(r[subtest]) for r in runs if r.get(subtest)]
+
+
+def subtest_names(runs):
+    """Sub-tests seen in any round of any build, in first-seen order, so the
+    table keeps the suite's own ordering rather than sorting alphabetically."""
+    names = []
+    for rounds in runs.values():
+        for round_result in rounds:
+            for name in round_result:
+                if name not in names:
+                    names.append(name)
+    return names
+
+
 def ci95(xs):
     if len(xs) < 2:
         return 0.0
@@ -65,6 +83,9 @@ def main():
     ap.add_argument("--baseline", default="vanilla",
                     help="build to measure overhead against")
     ap.add_argument("--out", help="write Markdown here as well as stdout")
+    ap.add_argument("--subtests", action="store_true",
+                    help="also break each benchmark down by sub-test, which is "
+                         "what shows a change confined to one operation")
     args = ap.parse_args()
 
     with open(args.results) as f:
@@ -114,6 +135,31 @@ def main():
             sig = "yes" if abs(t) > critical_t(df) else "no"
             add(f"| {label} | {cell} | {delta:+.1f}% | {sig} |")
         add("")
+
+        if args.subtests:
+            others = [l for l in labels if l != args.baseline]
+            add(f"| sub-test | {args.baseline} | "
+                + " | ".join(f"{l} | vs {args.baseline} | sig" for l in others)
+                + " |")
+            add("| --- | --- |" + " --- | --- | --- |" * len(others))
+            for sub in subtest_names(runs):
+                base_vals = per_round_subtest(runs[args.baseline], sub)
+                if not base_vals:
+                    continue
+                row = [sub, f"{st.mean(base_vals):.1f} ± {ci95(base_vals):.1f}"]
+                for label in others:
+                    vals = per_round_subtest(runs[label], sub)
+                    if not vals:
+                        row += ["—", "—", "—"]
+                        continue
+                    t, df = welch(base_vals, vals)
+                    row += [
+                        f"{st.mean(vals):.1f} ± {ci95(vals):.1f}",
+                        f"{overhead(st.mean(base_vals), st.mean(vals), hib):+.1f}%",
+                        "yes" if abs(t) > critical_t(df) else "no",
+                    ]
+                add("| " + " | ".join(row) + " |")
+            add("")
 
     add("---")
     add("")
