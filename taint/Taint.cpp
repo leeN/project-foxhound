@@ -313,11 +313,6 @@ TaintFlow& TaintFlow::extend(const TaintOperation& operation) {
   return *this;
 }
 
-TaintFlow& TaintFlow::extend(const TaintOperation& operation) const {
-  TaintFlow flow(*this);
-  return flow.extend(operation);
-}
-
 TaintFlow& TaintFlow::extend(TaintOperation&& operation) {
   TaintNode* newhead = new TaintNode(head_, std::move(operation));
   if (head_) {
