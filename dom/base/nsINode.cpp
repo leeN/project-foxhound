@@ -3779,7 +3779,8 @@ already_AddRefed<NodeList> nsINode::QuerySelectorAll(
   for (uint32_t i = 0; i < length; i++) {
     nsIContent* node = contentList->Item(i);
     if (node && node->IsElement()) {
-      node->AsElement()->TaintSelectorOperation("document.querySelectorAll", NS_ConvertUTF8toUTF16(aSelector));
+      node->AsElement()->TaintSelectorOperation("document.querySelectorAll", NS_ConvertUTF8toUTF16(aSelector),
+                                                int32_t(length), int32_t(i));
     }
   }
 

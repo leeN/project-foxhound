@@ -364,6 +364,43 @@ nsresult MarkTaintSource(TaintFlow &flow, const char* name, const nsAString &arg
   return NS_OK;
 }
 
+nsresult MarkTaintSourceSelector(TaintFlow &flow, const char* name, const nsAString &arg,
+                                 const nsINode* node, int32_t aMatchCount,
+                                 int32_t aMatchIndex)
+{
+  if (!isSourceActive(name)) {
+    return NS_OK;
+  }
+
+  JSContext* cx = nsContentUtils::GetCurrentJSContext();
+
+#ifdef TAINT_SELECTOR_XPATH
+  nsTArray<nsString> args;
+  args.AppendElement(arg);
+
+  nsAutoString elementDesc;
+  DescribeElement(node, elementDesc);
+  args.AppendElement(elementDesc);
+
+  if (aMatchCount >= 0) {
+    nsAutoString number;
+    number.AppendInt(aMatchCount);
+    args.AppendElement(number);
+    number.Truncate();
+    number.AppendInt(aMatchIndex);
+    args.AppendElement(number);
+  }
+
+  flow.extend(GetTaintOperation(cx, name, args));
+#else
+  (void)node;
+  (void)aMatchCount;
+  (void)aMatchIndex;
+  flow.extend(GetTaintOperation(cx, name, arg));
+#endif
+  return NS_OK;
+}
+
 nsresult MarkTaintSource(nsAString &str, const char* name, const nsTArray<nsString> &arg)
 {
   if (isSourceActive(name)) {

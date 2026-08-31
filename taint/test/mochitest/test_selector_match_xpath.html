@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>
+      Check that selector-based element lookups record the matched element's
+      XPath after the selector, and that list-returning lookups also record the
+      match count and index, so a taint flow says which node the lookup returned
+      instead of only which selector was used.
+    </title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css" />
+
+    <script type="text/javascript">
+      // A lookup records its operation on the element, not on a string, so it
+      // becomes observable by reading an attribute back off the element: that
+      // stacks element.attribute on top of the lookup's flow.
+      //
+      // Takes the value's `taint` array rather than the value itself, because
+      // handing a tainted string to a function records a `function` op of its own.
+      // The op is located by name rather than by index, since how many ops sit
+      // above it depends on the read used to observe it.
+      function lookupOp(taint, name) {
+        SimpleTest.ok(taint.length > 0, name + ": the read value must be tainted");
+        const flow = taint[0].flow;
+        const op = flow.find((o) => o.operation === name);
+        SimpleTest.ok(
+          !!op,
+          name + ": flow must contain the lookup, got [" +
+            flow.map((o) => o.operation) + "]"
+        );
+        return op;
+      }
+
+      // The XPath, count and index are recorded only under
+      // --enable-taint-selector-xpath, because describing an element costs a walk
+      // up its ancestors per matched element. What holds in both configurations is
+      // that arguments[0] is the selector -- the consumer reads these positionally,
+      // so the XPath is appended after it rather than put in front of it.
+      //
+      // Detected from the recording rather than from build configuration, so the
+      // test does not need to know how the build was configured.
+      function xpathRecorded(op) {
+        return !!op.arguments && op.arguments.length >= 2;
+      }
+
+      function assertSelectorAndXPath(op, selector, tag) {
+        SimpleTest.ok(
+          !!op.arguments && op.arguments.length >= 1,
+          op.operation + " must record the selector, got [" + op.arguments + "]"
+        );
+        SimpleTest.is(
+          op.arguments[0],
+          selector,
+          op.operation + " arguments[0] must be the selector"
+        );
+        if (!xpathRecorded(op)) {
+          SimpleTest.is(
+            op.arguments.length,
+            1,
+            op.operation + " records the selector only without " +
+              "--enable-taint-selector-xpath"
+          );
+          return false;
+        }
+        const xpath = op.arguments[1];
+        SimpleTest.ok(
+          typeof xpath === "string" && xpath.startsWith("/"),
+          op.operation + " arguments[1] must be an XPath: " + xpath
+        );
+        SimpleTest.ok(
+          new RegExp(tag, "i").test(xpath),
+          op.operation + " XPath must name the matched <" + tag + ">: " + xpath
+        );
+        return true;
+      }
+
+      // Each test uses its own element: a lookup appends to the element's flow
+      // list and an attribute read takes the *first* flow in that list, so two
+      // lookups of the same node would both report the earlier one.
+      add_task(async function test_getElementById_records_xpath() {
+        const el = document.getElementById("byid");
+        const op = lookupOp(el.getAttribute("data-value").taint,
+                            "document.getElementById");
+        assertSelectorAndXPath(op, "byid", "b");
+      });
+
+      add_task(async function test_querySelector_records_xpath() {
+        const el = document.querySelector("#byquery");
+        const op = lookupOp(el.getAttribute("data-value").taint,
+                            "document.querySelector");
+        assertSelectorAndXPath(op, "#byquery", "s");
+      });
+
+      add_task(async function test_getElementsByTagName_records_xpath() {
+        const el = document.getElementsByTagName("u")[0];
+        const op = lookupOp(el.getAttribute("data-value").taint,
+                            "document.getElementsByTagName");
+        assertSelectorAndXPath(op, "u", "u");
+      });
+
+      add_task(async function test_getElementsByClassName_records_xpath() {
+        const el = document.getElementsByClassName("cls-marker")[0];
+        const op = lookupOp(el.getAttribute("data-value").taint,
+                            "document.getElementsByClassName");
+        assertSelectorAndXPath(op, "cls-marker", "em");
+      });
+
+      // A list-returning lookup additionally records how many elements matched
+      // and which one this is, so the XPath is not the only thing separating the
+      // matches of one query.
+      add_task(async function test_querySelectorAll_records_count_and_index() {
+        const matches = document.querySelectorAll(".qsa-marker");
+        SimpleTest.is(matches.length, 2, "the fixture has two .qsa-marker nodes");
+
+        const first = lookupOp(matches[0].getAttribute("data-value").taint,
+                               "document.querySelectorAll");
+        const second = lookupOp(matches[1].getAttribute("data-value").taint,
+                                "document.querySelectorAll");
+
+        const recorded = assertSelectorAndXPath(first, ".qsa-marker", "i");
+        assertSelectorAndXPath(second, ".qsa-marker", "i");
+        if (!recorded) {
+          return;
+        }
+
+        SimpleTest.ok(
+          first.arguments.length >= 4 && second.arguments.length >= 4,
+          "querySelectorAll must record count and index"
+        );
+        SimpleTest.is(first.arguments[2], "2", "arguments[2] is the match count");
+        SimpleTest.is(second.arguments[2], "2", "arguments[2] is the match count");
+        SimpleTest.is(first.arguments[3], "0", "arguments[3] is the match index");
+        SimpleTest.is(second.arguments[3], "1", "arguments[3] is the match index");
+        SimpleTest.isnot(
+          first.arguments[1],
+          second.arguments[1],
+          "the two matches of one query record different XPaths"
+        );
+      });
+
+      // A single-element lookup records no count or index, so a consumer can tell
+      // the two shapes apart rather than reading a fabricated index.
+      add_task(async function test_single_match_records_no_index() {
+        const el = document.querySelector("#byquery");
+        const op = lookupOp(el.getAttribute("data-value").taint,
+                            "document.querySelector");
+        SimpleTest.is(
+          op.arguments.length,
+          xpathRecorded(op) ? 2 : 1,
+          "querySelector records no count or index, got [" + op.arguments + "]"
+        );
+      });
+
+      // The selector argument survives when the selector itself carries taint,
+      // which is the case the recording gap was reported for.
+      add_task(async function test_tainted_selector_keeps_both_arguments() {
+        const el = document.getElementById(String.tainted("bytaintedid"));
+        const op = lookupOp(el.getAttribute("data-value").taint,
+                            "document.getElementById");
+        assertSelectorAndXPath(op, "bytaintedid", "span");
+      });
+    </script>
+  </head>
+
+  <body>
+    <div id="fixture" style="display: none">
+      <b id="byid" data-value="v-byid">1</b>
+      <s id="byquery" data-value="v-byquery">2</s>
+      <i class="qsa-marker" data-value="v-qsa-0">3</i>
+      <i class="qsa-marker" data-value="v-qsa-1">4</i>
+      <u data-value="v-bytag">5</u>
+      <em class="cls-marker" data-value="v-bycls">6</em>
+      <span id="bytaintedid" data-value="v-tainted">7</span>
+    </div>
+  </body>
+</html>

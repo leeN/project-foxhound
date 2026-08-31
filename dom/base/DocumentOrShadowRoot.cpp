@@ -545,7 +545,8 @@ void DocumentOrShadowRoot::ElementsFromPoint(
   str = str + u","_ns;
   str.AppendFloat(aY);
   for (size_t i = 0; i < len; ++i) {
-    aElements[i]->TaintSelectorOperation("document.elementsFromPoint", str);
+    aElements[i]->TaintSelectorOperation("document.elementsFromPoint", str,
+                                        int32_t(len), int32_t(i));
   }
 }
 

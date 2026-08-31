@@ -6578,7 +6578,8 @@ bool Element::Translate() const {
   return true;
 }
 
-void Element::TaintSelectorOperation(const char* operation, const nsAString& aElementId) {
+void Element::TaintSelectorOperation(const char* operation, const nsAString& aElementId,
+                                     int32_t aMatchCount, int32_t aMatchIndex) {
   // Here we want to save a list of all selector operations performed on the element
 
   // Check if there is a direct flow
@@ -6591,7 +6592,7 @@ void Element::TaintSelectorOperation(const char* operation, const nsAString& aEl
   }
   // Mark this operation as a source, so even if there is not a direct flow,
   // we might still be able to find an indirect one.
-  MarkTaintSource(flow, operation, aElementId);
+  MarkTaintSourceSelector(flow, operation, aElementId, this, aMatchCount, aMatchIndex);
 
   // Add it to the list
   mTaintList.append(flow);

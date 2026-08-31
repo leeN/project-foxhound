@@ -25,6 +25,19 @@ set_define("TAINT_FULL_ARGS", taint_full_args)
 set_config("TAINT_FULL_ARGS", taint_full_args)
 
 option(
+    "--enable-taint-selector-xpath",
+    help="Record the matched element's XPath on selector based element lookups"
+)
+
+@depends("--enable-taint-selector-xpath")
+def taint_selector_xpath(value):
+    if value:
+        return True
+
+set_define("TAINT_SELECTOR_XPATH", taint_selector_xpath)
+set_config("TAINT_SELECTOR_XPATH", taint_selector_xpath)
+
+option(
     "--enable-taint-e2e-debug",
     help="Enable end to end tainting debug prints"
 )
