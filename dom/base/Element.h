@@ -2697,7 +2697,8 @@ class Element : public FragmentOrElement {
   TaintList mTaintList;
 
  public:
-  void TaintSelectorOperation(const char* operation, const nsAString& aElementId);
+  void TaintSelectorOperation(const char* operation, const nsAString& aElementId,
+                              int32_t aMatchCount = -1, int32_t aMatchIndex = -1);
 
   const TaintList& GetSelectorTaintFlowList() const { return mTaintList; }
 };

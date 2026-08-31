@@ -71,6 +71,23 @@ nsresult MarkTaintSource(JSContext* aCx, JSString* str, const char* name, const 
 
 nsresult MarkTaintSource(TaintFlow &flow, const char* name, const nsAString &arg);
 
+// Foxhound: Add taint source information for a selector-based element lookup.
+// `arg` is the selector the lookup used and `node` the element it returned, which
+// is recorded as an XPath so a consumer can find that element again without
+// re-running the query against the live document. `aMatchCount` and `aMatchIndex`
+// place the match inside a multi-element result and are left out of the operation
+// when `aMatchCount` is negative.
+//
+// The XPath, count and index are recorded only under --enable-taint-selector-xpath,
+// because describing an element costs a walk up its ancestors that also counts each
+// ancestor's preceding siblings, and this runs once per *matched* element. A lookup
+// returning many matches out of a long list therefore goes superlinear: measured at
+// 16x on getElementsByClassName over 20 matches under a 2000-child parent. Without
+// the flag only the selector is recorded, exactly as before the argument existed.
+nsresult MarkTaintSourceSelector(TaintFlow &flow, const char* name, const nsAString &arg,
+                                 const nsINode* node, int32_t aMatchCount,
+                                 int32_t aMatchIndex);
+
 // Foxhound: Report taint flows into DOM related sinks.
 nsresult ReportTaintSink(JSContext *cx, const nsAString &str, const char* name);
 
