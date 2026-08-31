@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>DOM selector benchmark</title>
+  </head>
+  <body>
+    <div id="fixture"></div>
+    <script>
+      // Foxhound records a taint operation for every element a selector lookup
+      // returns, so the cost of these APIs scales with the number of matched
+      // elements rather than with the number of calls. This benchmark separates
+      // those two: the single-match cases charge one recording per call, the
+      // many-match cases charge two hundred.
+      //
+      // The fixture is deliberately deep and free of ids below the root, because
+      // describing an element walks its ancestors and stops early when it finds
+      // an id. An application document is mostly id-less, so short-circuiting on
+      // ids here would measure the cheapest case and call it the common one.
+      const DEPTH = 12;
+      const LEAVES = 200;
+      const SINGLE_ITERATIONS = 20000;
+      const MANY_ITERATIONS = 200;
+      const LIST_ROOTS = 2000;
+
+      function buildFixture() {
+        const root = document.getElementById("fixture");
+        let node = root;
+        for (let d = 0; d < DEPTH; d++) {
+          const child = document.createElement("div");
+          child.className = "level";
+          node.appendChild(child);
+          node = child;
+        }
+        for (let i = 0; i < LEAVES; i++) {
+          const leaf = document.createElement("span");
+          leaf.className = "target";
+          leaf.setAttribute("data-value", "v" + i);
+          node.appendChild(leaf);
+        }
+        // One uniquely addressable leaf for the single-match lookups.
+        const only = document.createElement("b");
+        only.id = "only";
+        only.className = "sole";
+        only.setAttribute("data-value", "v-only");
+        node.appendChild(only);
+        return only;
+      }
+
+      // Independent roots for the live-list lookups: a list is cached on the node
+      // it was created for, so calling getElementsByClassName twice on the same
+      // root returns the cached list without matching again. Fresh roots make
+      // every call do the work. They are built outside the timed region.
+      function buildListRoots() {
+        const roots = [];
+        const host = document.createElement("div");
+        host.style.display = "none";
+        document.body.appendChild(host);
+        for (let i = 0; i < LIST_ROOTS; i++) {
+          const root = document.createElement("div");
+          for (let j = 0; j < 20; j++) {
+            const el = document.createElement("em");
+            el.className = "listed";
+            root.appendChild(el);
+          }
+          host.appendChild(root);
+          roots.push(root);
+        }
+        return roots;
+      }
+
+      const only = buildFixture();
+      const listRoots = buildListRoots();
+      let sink = 0;
+
+      const cases = {
+        getElementById(n) {
+          for (let i = 0; i < n; i++) {
+            sink += document.getElementById("only").nodeType;
+          }
+        },
+        querySelector(n) {
+          for (let i = 0; i < n; i++) {
+            sink += document.querySelector("b.sole").nodeType;
+          }
+        },
+        querySelectorAll_1(n) {
+          for (let i = 0; i < n; i++) {
+            sink += document.querySelectorAll("b.sole").length;
+          }
+        },
+        querySelectorAll_200(n) {
+          for (let i = 0; i < n; i++) {
+            sink += document.querySelectorAll("span.target").length;
+          }
+        },
+        getElementsByClassName_20(n) {
+          for (let i = 0; i < n; i++) {
+            sink += listRoots[i % listRoots.length].getElementsByClassName(
+              "listed"
+            ).length;
+          }
+        },
+        closest(n) {
+          for (let i = 0; i < n; i++) {
+            sink += only.closest("div.level").nodeType;
+          }
+        },
+      };
+
+      const ITERATIONS = {
+        getElementById: SINGLE_ITERATIONS,
+        querySelector: SINGLE_ITERATIONS,
+        querySelectorAll_1: SINGLE_ITERATIONS,
+        querySelectorAll_200: MANY_ITERATIONS,
+        getElementsByClassName_20: LIST_ROOTS,
+        closest: SINGLE_ITERATIONS,
+      };
+
+      function run() {
+        const results = {};
+        for (const name of Object.keys(cases)) {
+          const fn = cases[name];
+          const iterations = ITERATIONS[name];
+          // A warm-up pass, so JIT compilation of the loop is not charged to the
+          // measurement. The live-list case cannot be warmed without consuming
+          // the fresh roots it needs, so it runs cold.
+          if (name !== "getElementsByClassName_20") {
+            fn(Math.min(iterations, 200));
+          }
+          const start = performance.now();
+          fn(iterations);
+          results[name] = [performance.now() - start];
+        }
+        results.sink = [sink];
+        delete results.sink;
+        location = "/report?" + encodeURI(JSON.stringify(results));
+      }
+
+      addEventListener("load", () => setTimeout(run, 0));
+    </script>
+  </body>
+</html>

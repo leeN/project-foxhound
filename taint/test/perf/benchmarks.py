@@ -15,6 +15,8 @@ import re
 SUNSPIDER = "third_party/webkit/PerformanceTests/SunSpider/sunspider-1.0.1/sunspider-1.0.1"
 KRAKEN = "testing/talos/talos/tests/kraken"
 V8 = "testing/talos/talos/tests/v8_7"
+DROMAEO = "testing/talos/talos/tests/dromaeo"
+SELECTORS = "taint/test/perf/selectors"
 
 
 def _patch_location_driver(html):
@@ -126,6 +128,66 @@ def parse_v8(raw):
     return out
 
 
+# Dromaeo's Talos wrapper pages report through tpRecordTime, which is handed a
+# comma separated list of raw numbers with no subtest names attached, while the
+# named per-subtest results stay in a closure in webrunner.js. Hook the runner
+# where it already summarises a finished subtest, so the names come back with
+# the numbers, and let the driver hand the collection over when Talos would have
+# been called.
+DROMAEO_LOGTEST = "\tfunction logTest(data){\n"
+DROMAEO_LOGTEST_HOOK = (
+    "\tfunction logTest(data){\n"
+    "\t\t(window.__dromaeoResults = window.__dromaeoResults || []).push(\n"
+    "\t\t    {name: data.name, mean: parseFloat(data.mean)});\n"
+)
+
+DROMAEO_RUNNER_SCRIPT = '<script src="webrunner.js"></script>'
+# encodeURIComponent, not encodeURI: Dromaeo's CSS selector suites name sub-tests
+# after the selector they run, and five of them contain a "#". encodeURI leaves
+# that alone, the browser reads it as the start of a fragment, and the payload is
+# cut off mid-string.
+DROMAEO_REPORT_STUB = (
+    '<script src="webrunner.js"></script>\n'
+    "<script>window.tpRecordTime=function(){"
+    'location="/report?"'
+    "+encodeURIComponent(JSON.stringify(window.__dromaeoResults||[]));"
+    "};</script>"
+)
+
+
+def patch_dromaeo_webrunner(js):
+    if DROMAEO_LOGTEST not in js:
+        raise RuntimeError("could not find Dromaeo's logTest to hook")
+    return js.replace(DROMAEO_LOGTEST, DROMAEO_LOGTEST_HOOK, 1)
+
+
+def patch_dromaeo(html):
+    # Dromaeo reads TalosContentProfiler the way Kraken does, off a resource://
+    # script that is not there outside Talos.
+    if KRAKEN_TALOS_SCRIPT not in html:
+        raise RuntimeError("could not find the talos-powers script tag to stub")
+    html = html.replace(KRAKEN_TALOS_SCRIPT, KRAKEN_TALOS_STUB)
+    if DROMAEO_RUNNER_SCRIPT not in html:
+        raise RuntimeError("could not find the webrunner script tag")
+    return html.replace(DROMAEO_RUNNER_SCRIPT, DROMAEO_REPORT_STUB, 1)
+
+
+def parse_dromaeo(raw):
+    """Dromaeo hands back [{"name": ..., "mean": ...}, ...] in runs/s, one entry
+    per run of each subtest; higher is better."""
+    out = {}
+    for entry in json.loads(raw):
+        out.setdefault(entry["name"], []).append(float(entry["mean"]))
+    if not out:
+        raise RuntimeError("no Dromaeo subtest results in the payload")
+    return out
+
+
+def patch_none(html):
+    """For benchmarks written for this harness, which report to /report already."""
+    return html
+
+
 BENCHMARKS = {
     "sunspider": {
         "path": SUNSPIDER,
@@ -154,10 +216,42 @@ BENCHMARKS = {
         "higher_is_better": True,
         "label": "V8 benchmark v7",
     },
+    # The three above are pure JavaScript and never call a selector API, so they
+    # cannot see a change to one. These do.
+    "dromaeo-dom-query": {
+        "path": DROMAEO,
+        "driver": "dom-query.html",
+        "patch": patch_dromaeo,
+        "patch_files": {"webrunner.js": patch_dromaeo_webrunner},
+        "parse": parse_dromaeo,
+        "unit": "runs/s",
+        "higher_is_better": True,
+        "label": "Dromaeo DOM query",
+    },
+    "dromaeo-cssquery-jquery": {
+        "path": DROMAEO,
+        "driver": "cssquery-jquery.html",
+        "patch": patch_dromaeo,
+        "patch_files": {"webrunner.js": patch_dromaeo_webrunner},
+        "parse": parse_dromaeo,
+        "unit": "runs/s",
+        "higher_is_better": True,
+        "label": "Dromaeo CSS selectors (jQuery)",
+    },
+    "selectors": {
+        "path": SELECTORS,
+        "driver": "driver.html",
+        "patch": patch_none,
+        "parse": parse_keyed_lists,
+        "unit": "ms",
+        "higher_is_better": False,
+        "label": "Selector microbenchmark",
+    },
 }
 
 
 def resolve(topsrcdir, name):
     spec = dict(BENCHMARKS[name])
+    spec["name"] = name
     spec["abspath"] = os.path.join(topsrcdir, spec["path"])
     return spec
