@@ -1474,6 +1474,12 @@ void nsAttrValue::ParseAtomArray(const nsAString& aValue) {
   } else {
     RefPtr<nsAtom> atom = NS_AtomizeMainThread(aValue);
     ParseAtomArray(atom);
+    // Foxhound: atoms carry no taint of their own, and the parsed array is
+    // cached and shared between elements, so the taint has to be kept here.
+    // Set after parsing: ParseAtomArray(nsAtom*) resets this value first.
+    if (aValue.Taint()) {
+      mTaint = aValue.Taint();
+    }
   }
 }
 
