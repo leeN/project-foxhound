@@ -89,6 +89,14 @@
             sink += document.querySelectorAll("b.sole").length;
           }
         },
+        // Zero-match control: the same full-document walk as querySelectorAll_1,
+        // but nothing matches, so nothing is recorded. A difference here is
+        // traversal cost and cannot be recording cost.
+        querySelectorAll_0(n) {
+          for (let i = 0; i < n; i++) {
+            sink += document.querySelectorAll("b.nomatch").length;
+          }
+        },
         querySelectorAll_200(n) {
           for (let i = 0; i < n; i++) {
             sink += document.querySelectorAll("span.target").length;
@@ -112,6 +120,7 @@
         getElementById: SINGLE_ITERATIONS,
         querySelector: SINGLE_ITERATIONS,
         querySelectorAll_1: SINGLE_ITERATIONS,
+        querySelectorAll_0: SINGLE_ITERATIONS,
         querySelectorAll_200: MANY_ITERATIONS,
         getElementsByClassName_20: LIST_ROOTS,
         closest: SINGLE_ITERATIONS,
