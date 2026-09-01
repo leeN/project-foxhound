@@ -845,6 +845,12 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
   }
 
   void SetHTMLAttr(nsAtom* aName, const nsAString& aValue) {
+    if (MOZ_UNLIKELY(aValue.isTainted())) {
+      mozilla::Maybe<nsAutoString> taintHolder;
+      SetAttr(kNameSpaceID_None, aName,
+              RecordTaintAttributeWrite(aName, aValue, taintHolder), true);
+      return;
+    }
     SetAttr(kNameSpaceID_None, aName, aValue, true);
   }
   void SetHTMLAttr(nsAtom* aName, const nsAString& aValue,

@@ -219,6 +219,22 @@ nsresult MarkTaintOperation(nsAString &str, const char* name)
   return MarkTaintOperation(nsContentUtils::GetCurrentJSContext(), str, name);
 }
 
+nsresult MarkTaintOperationAttribute(nsAString &str, const char* name, const nsINode* node,
+                                     const nsAString &attr)
+{
+  if (str.isTainted()) {
+    nsTArray<nsString> args;
+
+    nsAutoString elementDesc;
+    DescribeElement(node, elementDesc);
+    args.AppendElement(elementDesc);
+    args.AppendElement(attr);
+
+    str.Taint().extend(GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, args));
+  }
+  return NS_OK;
+}
+
 static nsresult MarkTaintOperation(JSContext *cx, nsAString &str, const char* name, const nsTArray<nsString> &args)
 {
   if (str.isTainted()) {
@@ -621,6 +637,45 @@ nsresult ReportTaintSink(const nsAString &str, const char* name, const nsINode* 
   }
 
   return ReportTaintSink(str, name, elementDesc);
+}
+
+nsresult ReportTaintSink(const nsAString &str, const char* name, const nsINode* node,
+                         const nsAString &attr)
+{
+  if (!str.isTainted()) {
+    return NS_OK;
+  }
+
+  JSContext* cx = nsContentUtils::GetCurrentJSContext();
+  if (!cx) {
+    return NS_ERROR_FAILURE;
+  }
+
+  if (!nsContentUtils::IsSafeToRunScript() || !JS::CurrentGlobalOrNull(cx)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  if (!isSinkActive(name)) {
+    return NS_OK;
+  }
+
+  nsTArray<nsString> args;
+  nsAutoString elementDesc;
+  DescribeElement(node, elementDesc);
+  args.AppendElement(elementDesc);
+  args.AppendElement(attr);
+
+  JS::Rooted<JS::Value> argval(cx);
+  if (!mozilla::dom::ToJSValue(cx, args, &argval))
+    return NS_ERROR_FAILURE;
+
+  JS::Rooted<JS::Value> strval(cx);
+  if (!mozilla::dom::ToJSValue(cx, str, &strval))
+    return NS_ERROR_FAILURE;
+
+  JS_ReportTaintSink(cx, strval, name, argval);
+
+  return NS_OK;
 }
 
 nsresult ReportTaintSink(const nsAString &str, const char* name)

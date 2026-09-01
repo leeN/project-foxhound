@@ -1347,6 +1347,12 @@ class Element : public FragmentOrElement {
   void GetIdNoTainting(nsAString& aId) const { GetAttr(nsGkAtoms::id, aId, false); }
   void GetIdNoTainting(DOMString& aId) const { GetAttr(nsGkAtoms::id, aId, false); }
   void SetId(const nsAString& aId) {
+    if (MOZ_UNLIKELY(aId.isTainted())) {
+      mozilla::Maybe<nsAutoString> taintHolder;
+      SetAttr(kNameSpaceID_None, nsGkAtoms::id,
+              RecordTaintAttributeWrite(nsGkAtoms::id, aId, taintHolder), true);
+      return;
+    }
     SetAttr(kNameSpaceID_None, nsGkAtoms::id, aId, true);
   }
   void GetClassName(nsAString& aClassName) {
@@ -1356,6 +1362,14 @@ class Element : public FragmentOrElement {
     GetAttr(nsGkAtoms::_class, aClassName);
   }
   void SetClassName(const nsAString& aClassName) {
+    if (MOZ_UNLIKELY(aClassName.isTainted())) {
+      mozilla::Maybe<nsAutoString> taintHolder;
+      SetAttr(kNameSpaceID_None, nsGkAtoms::_class,
+              RecordTaintAttributeWrite(nsGkAtoms::_class, aClassName,
+                                        taintHolder),
+              true);
+      return;
+    }
     SetAttr(kNameSpaceID_None, nsGkAtoms::_class, aClassName, true);
   }
 
@@ -2171,14 +2185,61 @@ class Element : public FragmentOrElement {
   }
 
   /**
+   * Foxhound: record a scripted attribute write in the taint flow of the value
+   * being written, so that a value read back off an attribute of the live
+   * document carries how it got there. Returns the value to store: `aValue`
+   * itself when it carries no taint, otherwise `aHolder`, filled with a copy
+   * whose flow the operation was appended to.
+   *
+   * The copy is not an optimisation: a stored attribute value can share its
+   * string buffer with the string the caller handed us, and taint lives on that
+   * buffer, so extending the taint in place would retroactively add this write
+   * to the flow of the caller's own string.
+   *
+   * The untainted case must construct nothing at all. It is the whole cost of
+   * this instrumentation for a page that carries no taint, and it lands on an
+   * attribute write that sets the value it already holds -- which Firefox
+   * short-circuits, so there is almost nothing else in that path to hide a
+   * string construction behind. An empty Maybe pays for a bool.
+   *
+   * This is called from the scripted entry points -- setAttribute(),
+   * setAttributeNS() and the reflected property setters -- rather than from
+   * Element::SetAttr, which the HTML parser also uses. An attribute the parser
+   * set out of markup must not be recorded as an attribute API write: reading
+   * such a value back entity decodes it, which is the difference this operation
+   * exists to record.
+   */
+  const nsAString& TaintAttributeWrite(nsAtom* aName, const nsAString& aValue,
+                                       mozilla::Maybe<nsAutoString>& aHolder) {
+    if (!aValue.isTainted()) {
+      return aValue;
+    }
+    return RecordTaintAttributeWrite(aName, aValue, aHolder);
+  }
+
+  /**
    * Set an attribute in the simplest way possible.
    */
   void SetAttr(nsAtom* aAttr, const nsAString& aValue, ErrorResult& aError) {
+    if (MOZ_UNLIKELY(aValue.isTainted())) {
+      mozilla::Maybe<nsAutoString> taintHolder;
+      aError = SetAttr(kNameSpaceID_None, aAttr,
+                       RecordTaintAttributeWrite(aAttr, aValue, taintHolder),
+                       true);
+      return;
+    }
     aError = SetAttr(kNameSpaceID_None, aAttr, aValue, true);
   }
 
   void SetAttr(nsAtom* aAttr, const nsAString& aValue,
                nsIPrincipal* aTriggeringPrincipal, ErrorResult& aError) {
+    if (MOZ_UNLIKELY(aValue.isTainted())) {
+      mozilla::Maybe<nsAutoString> taintHolder;
+      aError = SetAttr(kNameSpaceID_None, aAttr,
+                       RecordTaintAttributeWrite(aAttr, aValue, taintHolder),
+                       aTriggeringPrincipal, true);
+      return;
+    }
     aError =
         SetAttr(kNameSpaceID_None, aAttr, aValue, aTriggeringPrincipal, true);
   }
@@ -2389,6 +2450,14 @@ class Element : public FragmentOrElement {
   virtual void SetTaintSourceGetAttr(const nsAString& aName, DOMString& aResult) const;
 
   virtual void SetTaintSourceGetAttr(const nsAString& aName, nsAString& aResult) const;
+
+  /**
+   * Foxhound: append the taint operation for a scripted attribute write. Only
+   * called for a value that carries taint; use TaintAttributeWrite().
+   */
+  const nsAString& RecordTaintAttributeWrite(
+      nsAtom* aName, const nsAString& aValue,
+      mozilla::Maybe<nsAutoString>& aHolder);
 
   /**
    * Hook that is called by Element::SetAttr to allow subclasses to check

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>
+      Check that a scripted attribute write records element.setAttribute in the
+      taint flow of the value written, so that a value read back off an attribute
+      of the live document says how it got there -- and that an attribute the
+      parser set out of markup does not, since reading that one back entity
+      decodes it.
+    </title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css" />
+
+    <script type="text/javascript">
+      const WRITE_OP = "element.setAttribute";
+
+      // A flow is ordered newest-first, so the read is at flow[0] and the write
+      // that put the value there sits below it.
+      //
+      // Takes the value's `taint` array rather than the value itself: handing a
+      // tainted string to any function records a `function` op that would become
+      // the flow head. MarkTaintedFunctionArguments marks direct string
+      // arguments only, so passing the array is safe.
+      function flowOf(taint, name) {
+        SimpleTest.ok(taint.length > 0, name + ": the read value must be tainted");
+        return taint[0].flow;
+      }
+
+      function writeOp(taint, name) {
+        const flow = flowOf(taint, name);
+        const op = flow.find((o) => o.operation === WRITE_OP);
+        SimpleTest.ok(
+          !!op,
+          name + ": flow must contain " + WRITE_OP + ", got [" +
+            flow.map((o) => o.operation) + "]"
+        );
+        return op;
+      }
+
+      function assertTargetAndAttr(op, id, attr, name) {
+        SimpleTest.ok(
+          op.arguments && op.arguments.length >= 2,
+          name + ": " + WRITE_OP + " must record two arguments, got [" +
+            op.arguments + "]"
+        );
+        const xpath = op.arguments[0];
+        SimpleTest.ok(
+          typeof xpath === "string" && xpath.includes(id),
+          name + ": arguments[0] must locate the element written to (#" + id +
+            "): " + xpath
+        );
+        SimpleTest.is(op.arguments[1], attr, name + ": arguments[1] is the attribute name");
+      }
+
+      add_task(async function test_setAttribute_round_trip() {
+        const div = document.getElementById("target");
+        div.setAttribute("data-value", String.tainted("hello"));
+        const op = writeOp(div.getAttribute("data-value").taint, "setAttribute");
+        assertTargetAndAttr(op, "target", "data-value", "setAttribute");
+      });
+
+      // The read must sit above the write: the value was put there first and read
+      // back afterwards, and the consumer replays a flow in that order.
+      add_task(async function test_read_is_above_the_write() {
+        const div = document.getElementById("order");
+        div.setAttribute("data-value", String.tainted("hello"));
+        const flow = flowOf(div.getAttribute("data-value").taint, "order");
+        const read = flow.findIndex((o) => o.operation === "element.attribute");
+        const write = flow.findIndex((o) => o.operation === WRITE_OP);
+        SimpleTest.ok(read >= 0 && write > read,
+          "element.attribute must sit above " + WRITE_OP + ", got [" +
+            flow.map((o) => o.operation) + "]");
+      });
+
+      // The reflected property setters go through a different entry point than
+      // setAttribute() and must record the same operation.
+      add_task(async function test_property_setter_records_the_write() {
+        const anchor = document.getElementById("anchor");
+        anchor.title = String.tainted("hello");
+        const op = writeOp(anchor.getAttribute("title").taint, "title setter");
+        assertTargetAndAttr(op, "anchor", "title", "title setter");
+      });
+
+      // className and id have infallible setters that do not go through the same
+      // helper as the others, so they are covered separately. class is also the
+      // one attribute whose value is stored as an atom array, which drops the
+      // taint unless nsAttrValue keeps it beside the parsed value.
+      add_task(async function test_className_setter_records_the_write() {
+        const div = document.getElementById("reflected");
+        div.className = String.tainted("hello");
+        const op = writeOp(div.getAttribute("class").taint, "className setter");
+        assertTargetAndAttr(op, "reflected", "class", "className setter");
+      });
+
+      // A tainted id is what a later getElementById() looks up, so it has to
+      // carry its write.
+      add_task(async function test_id_setter_records_the_write() {
+        const div = document.getElementById("identified");
+        div.id = String.tainted("hello");
+        const op = writeOp(div.getAttribute("id").taint, "id setter");
+        SimpleTest.is(op.arguments[1], "id", "id setter records the attribute");
+      });
+
+      // The SVG string attributes are animated values with a setter of their
+      // own, and <svg:a href> is a javascript: URL sink like the HTML one.
+      add_task(async function test_svg_base_value_records_the_write() {
+        const anchor = document.getElementById("svganchor");
+        anchor.href.baseVal = String.tainted("hello");
+        const op = writeOp(anchor.getAttribute("href").taint, "SVG baseVal");
+        assertTargetAndAttr(op, "svganchor", "href", "SVG baseVal");
+      });
+
+      add_task(async function test_setAttributeNS_records_the_write() {
+        const div = document.getElementById("namespaced");
+        div.setAttributeNS("urn:test", "t:data-value", String.tainted("hello"));
+        const op = writeOp(
+          div.getAttributeNS("urn:test", "data-value").taint,
+          "setAttributeNS"
+        );
+        assertTargetAndAttr(op, "namespaced", "data-value", "setAttributeNS");
+      });
+
+      // The point of the operation: an attribute the HTML parser set out of
+      // markup must not carry it. Reading that value back entity decodes it,
+      // where reading back an attribute API write returns it verbatim, and the
+      // recorded flow is what tells those two apart.
+      add_task(async function test_markup_write_is_not_an_attribute_write() {
+        const host = document.getElementById("markup");
+        host.innerHTML = "<span data-value='" + String.tainted("hello") + "'>x</span>";
+        const value = host.firstChild.getAttribute("data-value");
+        const flow = flowOf(value.taint, "markup");
+        SimpleTest.ok(
+          !flow.some((o) => o.operation === WRITE_OP),
+          "a parser written attribute must not record " + WRITE_OP + ", got [" +
+            flow.map((o) => o.operation) + "]"
+        );
+      });
+
+      // An untainted write must not be copied or annotated, and must still be
+      // stored: the taint path is not allowed to change what the DOM does.
+      // Note the read itself is a taint source in Foxhound whatever was written,
+      // so what says the write was left alone is the absence of the operation,
+      // not the absence of taint.
+      add_task(async function test_untainted_write_is_untouched() {
+        const div = document.getElementById("clean");
+        div.setAttribute("data-value", "plain");
+        const value = div.getAttribute("data-value");
+        SimpleTest.is(value, "plain",
+          "an untainted attribute value is stored unchanged");
+        const flow = flowOf(value.taint, "untainted");
+        SimpleTest.ok(
+          !flow.some((o) => o.operation === WRITE_OP),
+          "an untainted write records no " + WRITE_OP + ", got [" +
+            flow.map((o) => o.operation) + "]"
+        );
+      });
+    </script>
+  </head>
+
+  <body>
+    <div id="fixture" style="display: none">
+      <div id="target"></div>
+      <div id="order"></div>
+      <a id="anchor"></a>
+      <div id="namespaced"></div>
+      <div id="reflected"></div>
+      <div id="identified"></div>
+      <svg xmlns="http://www.w3.org/2000/svg"><a id="svganchor"></a></svg>
+      <div id="markup"></div>
+      <div id="clean"></div>
+    </div>
+  </body>
+</html>

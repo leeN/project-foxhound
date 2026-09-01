@@ -33,6 +33,15 @@ nsresult MarkTaintOperation(nsACString &str, const char* name, const nsTArray<ns
 nsresult MarkTaintOperation(nsCString &str, const char* name, const nsTArray<nsCString> &arg);
 nsresult MarkTaintOperation(StringTaint& aTaint, const char* name);
 
+// Foxhound: Record a scripted attribute write in the flow of the value written.
+// `node` is the element written to and `attr` the attribute's local name, so a
+// consumer that later sees the value read back off the live document knows it
+// was put there through the attribute API -- where it is stored and returned
+// verbatim -- rather than parsed out of markup, where reading it back entity
+// decodes it. The two produce different results from the same recorded string.
+nsresult MarkTaintOperationAttribute(nsAString &str, const char* name, const nsINode* node,
+                                     const nsAString &attr);
+
 // Foxhound: Add taint source information to a string
 nsresult MarkTaintSource(nsAString &str, const char* name);
 nsresult MarkTaintSource(nsACString &str, const char* name);
@@ -95,6 +104,12 @@ nsresult ReportTaintSink(JSContext *cx, const nsAString &str, const char* name);
 nsresult ReportTaintSink(const nsAString &str, const char* name);
 
 nsresult ReportTaintSink(const nsAString &str, const char* name, const nsINode* node);
+
+// Foxhound: Report a sink that is an attribute of `node`, recording the XPath as
+// arguments[0] and the attribute's local name as arguments[1]. The name is needed
+// where one sink covers a family of attributes, as the event handler sink does.
+nsresult ReportTaintSink(const nsAString &str, const char* name, const nsINode* node,
+                         const nsAString &attr);
 
 nsresult ReportTaintSink(const nsACString &str, const char* name);
 

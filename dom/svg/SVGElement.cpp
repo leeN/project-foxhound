@@ -2016,6 +2016,14 @@ void SVGElement::SetStringBaseValue(uint8_t aAttrEnum,
 
   NS_ASSERTION(aAttrEnum < info.mCount, "aAttrEnum out of range");
 
+  if (MOZ_UNLIKELY(aValue.isTainted())) {
+    mozilla::Maybe<nsAutoString> taintHolder;
+    SetAttr(info.mInfos[aAttrEnum].mNamespaceID, info.mInfos[aAttrEnum].mName,
+            RecordTaintAttributeWrite(info.mInfos[aAttrEnum].mName, aValue,
+                                      taintHolder),
+            true);
+    return;
+  }
   SetAttr(info.mInfos[aAttrEnum].mNamespaceID, info.mInfos[aAttrEnum].mName,
           aValue, true);
 }
