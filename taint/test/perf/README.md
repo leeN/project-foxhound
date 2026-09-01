@@ -14,6 +14,8 @@ tree, so no network access and no Talos machinery is involved:
 | V8 benchmark v7 | `testing/talos/talos/tests/v8_7` | score, higher is better |
 | Dromaeo DOM query | `testing/talos/talos/tests/dromaeo` | runs/s, higher is better |
 | Dromaeo CSS selectors (jQuery) | `testing/talos/talos/tests/dromaeo` | runs/s, higher is better |
+| Dromaeo DOM attributes | `testing/talos/talos/tests/dromaeo` | runs/s, higher is better |
+| Dromaeo DOM modify | `testing/talos/talos/tests/dromaeo` | runs/s, higher is better |
 | Selector microbenchmark | `taint/test/perf/selectors` | ms, lower is better |
 
 The first three are pure JavaScript. They contain no live call to a selector
@@ -32,6 +34,14 @@ the node it was created for, so calling `getElementsByTagName` repeatedly on the
 same root matches once and is free afterwards. The microbenchmark exists to
 cover what that leaves out: a deep id-less fixture, two hundred matches in a
 single `querySelectorAll`, and a fresh root per live-list lookup.
+
+`dom-attr` is the one to run for a change to the attribute code: its
+`setAttribute` and `element.property = value` sub-tests write the value the
+attribute already holds, which Firefox short-circuits, so they are the emptiest
+attribute write there is and the least able to hide work added to that path. Its
+`getAttribute` and `element.expando` sub-tests touch no write path at all and so
+serve as controls. `dom-modify` covers the parser instead, through `innerHTML`
+and `createElement`.
 
 Each driver reports its results differently, so `benchmarks.py` gives each one
 a small patch that hands the numbers back to the harness instead of writing
