@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>
+      Check that attributes which hand their value to the browser as script or as
+      a URL to load are reported as taint sinks when written through the attribute
+      API, and that inert attributes are not.
+    </title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css" />
+
+    <script type="text/javascript">
+      SimpleTest.waitForExplicitFinish();
+
+      // Elements are left out of the document: the sink check runs on the write
+      // itself, and a live <base href> or <meta refresh> would take the harness
+      // with it.
+      const reports = [];
+      addEventListener(
+        "__taintreport",
+        (report) => {
+          // Read the arguments off the flow rather than passing the tainted
+          // string anywhere, which would record a `function` op on it.
+          const flow = report.detail.str.taint[0].flow;
+          const op = flow.find((o) => o.operation === report.detail.sink);
+          reports.push({ sink: report.detail.sink, args: op ? op.arguments : [] });
+        },
+        false
+      );
+
+      function make(tag, ns) {
+        return ns ? document.createElementNS(ns, tag) : document.createElement(tag);
+      }
+
+      const SVG = "http://www.w3.org/2000/svg";
+      const XLINK = "http://www.w3.org/1999/xlink";
+
+      function runWrites() {
+        const tainted = String.tainted("PAYLOAD");
+
+        make("div").setAttribute("onclick", tainted);
+        make("base").setAttribute("href", tainted);
+        make("link").setAttribute("href", tainted);
+        make("button").setAttribute("formaction", tainted);
+        make("input").setAttribute("formaction", tainted);
+        make("input").setAttribute("src", tainted);
+        make("frame").setAttribute("src", tainted);
+        make("a", SVG).setAttribute("href", tainted);
+        make("a", SVG).setAttributeNS(XLINK, "xlink:href", tainted);
+
+        const refresh = make("meta");
+        refresh.setAttribute("http-equiv", "refresh");
+        refresh.setAttribute("content", tainted);
+
+        // Must stay silent: a <meta content> without a refresh is inert, an
+        // attribute the browser never interprets is inert, and an element's
+        // own already covered sinks must not be reported twice.
+        make("meta").setAttribute("content", tainted);
+        make("div").setAttribute("data-value", tainted);
+        make("div").setAttribute("title", tainted);
+      }
+
+      // The same dangerous attribute, but set by the HTML parser out of tainted
+      // markup instead of through the attribute API. The hook is reached with the
+      // taint intact -- nsHtml5TreeOperation hands the value to Element::SetAttr
+      // as a string, because MaybeAsUntaintedAtom refuses to drop taint, and the
+      // parsed value reads back with its source in the flow -- but the report is
+      // dropped, so the write is only recorded at the innerHTML sink. The likely
+      // cause is ReportTaintSink requiring nsContentUtils::IsSafeToRunScript(),
+      // which is false while the fragment parser holds a script blocker.
+      function runMarkupWrite() {
+        make("div").innerHTML =
+          "<iframe src='" + String.tainted("PAYLOAD") + "'></iframe>";
+      }
+
+      function sinksSeen(list) {
+        return list.map((r) => r.sink);
+      }
+
+      function checkResults(reports, markupReports) {
+        const expected = [
+          "element.eventHandler",
+          "base.href",
+          "link.href",
+          "button.formaction",
+          "input.formaction",
+          "input.src",
+          "frame.src",
+          "svg.href",
+          "meta.content",
+        ];
+        for (const sink of expected) {
+          SimpleTest.ok(
+            sinksSeen(reports).includes(sink),
+            sink + " must be reported, saw [" + sinksSeen(reports) + "]"
+          );
+        }
+
+        SimpleTest.is(
+          sinksSeen(reports).filter((s) => s === "svg.href").length,
+          2,
+          "svg.href is reported for both the href and the xlink:href spelling"
+        );
+
+        // One report per write and nothing else: an inert attribute reaching a
+        // sink would be a false positive in every crawl that uses this.
+        SimpleTest.is(
+          reports.length,
+          expected.length + 1,
+          "no sink beyond the expected ones, saw [" + sinksSeen(reports) + "]"
+        );
+
+        // The handler sink covers a family of attributes, so it has to say which
+        // one it was: onclick and onerror are not the same finding.
+        const handler = reports.find((r) => r.sink === "element.eventHandler");
+        SimpleTest.ok(
+          handler.args && handler.args.length >= 2,
+          "element.eventHandler records the target and the attribute, got [" +
+            handler.args + "]"
+        );
+        SimpleTest.is(
+          handler.args[1],
+          "onclick",
+          "element.eventHandler arguments[1] is the handler attribute name"
+        );
+
+        // Pins the coverage as it stands: tainted markup is recorded at the
+        // markup sink, and its dangerous attribute is not separately reported.
+        // If that ever changes, this is where it surfaces.
+        SimpleTest.ok(
+          sinksSeen(markupReports).includes("innerHTML"),
+          "tainted markup must report the markup sink, saw [" +
+            sinksSeen(markupReports) + "]"
+        );
+        SimpleTest.ok(
+          !sinksSeen(markupReports).includes("iframe.src"),
+          "a parser written attribute is not separately reported, saw [" +
+            sinksSeen(markupReports) + "]"
+        );
+
+        SimpleTest.finish();
+      }
+
+      function startTest() {
+        runWrites();
+        // The sink report is dispatched as an event, so let it land first, and
+        // keep the two phases in separate buckets: the markup write reports the
+        // innerHTML sink as well, which is not what this is counting.
+        SimpleTest.executeSoon(() => {
+          const apiReports = reports.splice(0);
+          runMarkupWrite();
+          SimpleTest.executeSoon(() =>
+            checkResults(apiReports, reports.splice(0))
+          );
+        });
+      }
+    </script>
+  </head>
+
+  <body onload="startTest();"></body>
+</html>
