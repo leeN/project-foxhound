@@ -1814,13 +1814,17 @@ void Element::SetAttribute(const nsAString& aName, const nsAString& aValue,
       aError.Throw(NS_ERROR_OUT_OF_MEMORY);
       return;
     }
-    aError = SetAttr(kNameSpaceID_None, nameAtom, aValue, aTriggeringPrincipal,
-                     true);
+    mozilla::Maybe<nsAutoString> taintHolder;
+    aError = SetAttr(kNameSpaceID_None, nameAtom,
+                     TaintAttributeWrite(nameAtom, aValue, taintHolder),
+                     aTriggeringPrincipal, true);
     return;
   }
 
+  mozilla::Maybe<nsAutoString> taintHolder;
   aError = SetAttr(name->NamespaceID(), name->LocalName(), name->GetPrefix(),
-                   aValue, aTriggeringPrincipal, true);
+                   TaintAttributeWrite(name->LocalName(), aValue, taintHolder),
+                   aTriggeringPrincipal, true);
 }
 
 void Element::RemoveAttribute(const nsAString& aName, ErrorResult& aError) {
@@ -1896,8 +1900,10 @@ void Element::SetAttributeNS(const nsAString& aNamespaceURI,
     return;
   }
 
+  mozilla::Maybe<nsAutoString> taintHolder;
   aError = SetAttr(ni->NamespaceID(), ni->NameAtom(), ni->GetPrefixAtom(),
-                   aValue, aTriggeringPrincipal, true);
+                   TaintAttributeWrite(ni->NameAtom(), aValue, taintHolder),
+                   aTriggeringPrincipal, true);
 }
 
 already_AddRefed<nsIPrincipal> Element::CreateDevtoolsPrincipal() {
@@ -1944,8 +1950,11 @@ void Element::SetAttribute(
     if (aError.Failed()) {
       return;
     }
-    aError = SetAttr(kNameSpaceID_None, nameAtom, *compliantString,
-                     aTriggeringPrincipal, true);
+    mozilla::Maybe<nsAutoString> taintHolder;
+    aError = SetAttr(
+        kNameSpaceID_None, nameAtom,
+        TaintAttributeWrite(nameAtom, *compliantString, taintHolder),
+        aTriggeringPrincipal, true);
     return;
   }
 
@@ -1960,8 +1969,11 @@ void Element::SetAttribute(
     return;
   }
   if (!guard.Mutated(0)) {
+    mozilla::Maybe<nsAutoString> taintHolder;
     aError = SetAttr(name->NamespaceID(), name->LocalName(), name->GetPrefix(),
-                     *compliantString, aTriggeringPrincipal, true);
+                     TaintAttributeWrite(name->LocalName(), *compliantString,
+                                         taintHolder),
+                     aTriggeringPrincipal, true);
     return;
   }
 
@@ -1993,8 +2005,11 @@ void Element::SetAttributeNS(
   if (aError.Failed()) {
     return;
   }
+  mozilla::Maybe<nsAutoString> taintHolder;
   aError = SetAttr(ni->NamespaceID(), ni->NameAtom(), ni->GetPrefixAtom(),
-                   *compliantString, aTriggeringPrincipal, true);
+                   TaintAttributeWrite(ni->NameAtom(), *compliantString,
+                                       taintHolder),
+                   aTriggeringPrincipal, true);
 }
 
 void Element::SetAttributeDevtools(const nsAString& aName,
@@ -3688,8 +3703,15 @@ nsresult Element::SetAttrInternal(int32_t aNamespaceID, nsAtom* aName,
   bool oldValueSet;
 
   // Foxhound: the script blocker below will prevent us from executing taint notifications!
-  // So add our own callback to check the taint, even if value is not changing
-  CheckTaintSinkSetAttr(aNamespaceID, aName, aValue.String());
+  // So add our own callback to check the taint, even if value is not changing.
+  // Nothing the hook reaches can report anything for an untainted value, so the
+  // taint check comes first: this runs on every attribute write in the browser,
+  // the parser's included, and the hook is a virtual call whose overrides walk
+  // a list of attribute names. String() is called either way, as before.
+  const nsAString& valueString = aValue.String();
+  if (valueString.isTainted()) {
+    CheckTaintSinkSetAttr(aNamespaceID, aName, valueString);
+  }
 
   if (OnlyNotifySameValueSet(aNamespaceID, aName, aPrefix, aValue, aNotify,
                              oldValue, &modType, &oldValueSet)) {
@@ -4147,8 +4169,107 @@ void Element::SetTaintSourceGetAttr(int32_t aNameSpaceID, const nsAtom* aName,
   SetTaintSourceGetAttr(aName, aResult);
 };
 
+const nsAString& Element::RecordTaintAttributeWrite(
+    nsAtom* aName, const nsAString& aValue,
+    mozilla::Maybe<nsAutoString>& aHolder) {
+  MOZ_ASSERT(aValue.isTainted(), "call TaintAttributeWrite instead");
+
+  // Copy the characters rather than the string, so that the buffer the taint is
+  // extended on cannot be one the caller still holds.
+  aHolder.emplace();
+  aHolder->Assign(aValue.BeginReading(), aValue.Length());
+  aHolder->AssignTaint(aValue.Taint());
+  MarkTaintOperationAttribute(*aHolder, "element.setAttribute", this,
+                              nsAtomString(aName));
+  return *aHolder;
+}
+
+// Foxhound: attributes whose value the browser takes as a URL to load or
+// navigate to, and which no element specific CheckTaintSinkSetAttr override
+// reports already. Those cover a.href, area.href, iframe.src, iframe.srcdoc,
+// img.src, img.srcset, script.src, object.data, embed.src, source.src,
+// source.srcset, form.action, media.src, track.src and element.style.
+static const char* DangerousAttributeSink(const Element* aElement,
+                                          int32_t aNamespaceID, nsAtom* aName) {
+  if (aElement->IsSVGElement()) {
+    // <svg:a href>, <use href>, <image href>, in both spellings. A javascript:
+    // URL in an SVG <a> runs on click just as it does in an HTML one.
+    if (aName == nsGkAtoms::href && (aNamespaceID == kNameSpaceID_None ||
+                                     aNamespaceID == kNameSpaceID_XLink)) {
+      return "svg.href";
+    }
+    return nullptr;
+  }
+
+  if (aNamespaceID != kNameSpaceID_None) {
+    return nullptr;
+  }
+
+  if (aName == nsGkAtoms::href) {
+    // <base href> rewrites every relative URL on the page, including the ones
+    // already parsed, so it redirects loads the attacker never touched.
+    if (aElement->IsHTMLElement(nsGkAtoms::base)) {
+      return "base.href";
+    }
+    if (aElement->IsHTMLElement(nsGkAtoms::link)) {
+      return "link.href";
+    }
+    return nullptr;
+  }
+
+  if (aName == nsGkAtoms::formaction) {
+    // Overrides the form's action, so it is the same sink one element down.
+    if (aElement->IsHTMLElement(nsGkAtoms::button)) {
+      return "button.formaction";
+    }
+    if (aElement->IsHTMLElement(nsGkAtoms::input)) {
+      return "input.formaction";
+    }
+    return nullptr;
+  }
+
+  if (aName == nsGkAtoms::src) {
+    if (aElement->IsHTMLElement(nsGkAtoms::input)) {
+      return "input.src";
+    }
+    if (aElement->IsHTMLElement(nsGkAtoms::frame)) {
+      return "frame.src";
+    }
+    return nullptr;
+  }
+
+  if (aName == nsGkAtoms::content && aElement->IsHTMLElement(nsGkAtoms::meta) &&
+      aElement->AttrValueIs(kNameSpaceID_None, nsGkAtoms::httpEquiv,
+                            u"refresh"_ns, eIgnoreCase)) {
+    // Only a refresh navigates; every other <meta content> is inert.
+    return "meta.content";
+  }
+
+  return nullptr;
+}
+
 nsresult Element::CheckTaintSinkSetAttr(int32_t aNamespaceID, nsAtom* aName,
                                         const nsAString& aValue) {
+  // Foxhound: this hook runs on every attribute write, so the untainted case
+  // has to be a single test. Nothing below reports anything for a value that
+  // carries no taint.
+  if (!aValue.isTainted()) {
+    return NS_OK;
+  }
+
+  // Foxhound: an event handler attribute is script text, so a tainted value
+  // reaching one is executed. IsEventAttributeName() is the DOM's own test for
+  // whether this attribute installs a handler on this element, which covers
+  // HTML, SVG and MathML without a list of handler names to keep up to date.
+  if (aNamespaceID == kNameSpaceID_None && IsEventAttributeName(aName)) {
+    ReportTaintSink(aValue, "element.eventHandler", this, nsAtomString(aName));
+    return NS_OK;
+  }
+
+  if (const char* sink = DangerousAttributeSink(this, aNamespaceID, aName)) {
+    ReportTaintSink(aValue, sink, this);
+  }
+
   return NS_OK;
 }
 
