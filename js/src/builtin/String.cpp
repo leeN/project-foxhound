@@ -2061,7 +2061,8 @@ static bool str_normalize(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-  JSString* ret = NormalizeString(cx, form, str);
+  // Foxhound: rooted because TaintOperationFromContext can trigger GC
+  Rooted<JSString*> ret(cx, NormalizeString(cx, form, str));
   if (!ret) {
     return false;
   }
@@ -4247,8 +4248,9 @@ static ArrayObject* SplitHelper(JSContext* cx, Handle<JSLinearString*> str,
 
     // Step 14.c.ii.1.
     size_t subLength = size_t(endIndex - sepLength - lastEndIndex);
-    JSString* sub =
-        NewDependentString(cx, str, lastEndIndex, subLength, gcHeap);
+    // Foxhound: rooted because TaintLocationFromContext can trigger GC
+    JS::Rooted<JSString*> sub(
+        cx, NewDependentString(cx, str, lastEndIndex, subLength, gcHeap));
 
     // Steps 14.c.ii.2-4.
     if (!sub || !NewbornArrayPush(cx, substrings, StringValue(sub))) {
@@ -4275,7 +4277,9 @@ static ArrayObject* SplitHelper(JSContext* cx, Handle<JSLinearString*> str,
 
   // Step 15.
   size_t subLength = strLength - lastEndIndex;
-  JSString* sub = NewDependentString(cx, str, lastEndIndex, subLength, gcHeap);
+  // Foxhound: rooted, see the loop above.
+  JS::Rooted<JSString*> sub(
+      cx, NewDependentString(cx, str, lastEndIndex, subLength, gcHeap));
 
   // Steps 16-17.
   if (!sub || !NewbornArrayPush(cx, substrings, StringValue(sub))) {
@@ -4393,7 +4397,9 @@ static ArrayObject* SplitSingleCharHelper(JSContext* cx,
     }
 
     size_t subLength = index - lastEndIndex;
-    JSString* sub = NewDependentString(cx, str, lastEndIndex, subLength);
+    // Foxhound: rooted as taintarg() can trigger GC
+    JS::Rooted<JSString*> sub(
+        cx, NewDependentString(cx, str, lastEndIndex, subLength));
     if (!sub) {
       return nullptr;
     }
@@ -4408,8 +4414,9 @@ static ArrayObject* SplitSingleCharHelper(JSContext* cx,
   MOZ_ASSERT(lastEndIndex <= textLen);
 
   // Add substring for tail of string (after last match).
-  JSString* sub =
-      NewDependentString(cx, str, lastEndIndex, textLen - lastEndIndex);
+  // Foxhound: rooted, see the loop above.
+  JS::Rooted<JSString*> sub(
+      cx, NewDependentString(cx, str, lastEndIndex, textLen - lastEndIndex));
   if (!sub) {
     return nullptr;
   }
