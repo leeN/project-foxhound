@@ -5207,7 +5207,9 @@ JS_ReportTaintSink(JSContext* cx, JS::HandleString str, const char* sink, JS::Ha
   JS_ReportWarningUTF8(cx, "Tainted flow from %s into %s!", firstRange.flow().source().name(), sink);
 
   // Extend the taint flow to include the sink function
-  str->taint().extend(TaintOperationFromContext(cx, sink, arg, true));
+  // Foxhound: build the operation first, as it allocates which might move str.
+  TaintOperation op = TaintOperationFromContext(cx, sink, arg, true);
+  str->taint().extend(std::move(op));
 
   // Trigger a custom event that can be caught by an extension.
   // To simplify things, this part is implemented in JavaScript. Since we don't want to recompile
