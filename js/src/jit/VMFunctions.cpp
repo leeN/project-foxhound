@@ -1418,7 +1418,9 @@ JSString* StringReplace(JSContext* cx, HandleString string,
   // Foxhound: We have to root the string here, as we introduce the TaintOperationFromContext call, which can trigger the GC.
   Rooted<JSString*> str(cx, str_replace_string_raw(cx, string, pattern, repl));
   if (str && str->taint().hasTaint()) {
-    str->taint().extend(TaintOperationFromContext(cx, "replace", pattern, repl));
+    // Foxhound: build the operation first, as it allocates which might move str.
+    TaintOperation op = TaintOperationFromContext(cx, "replace", pattern, repl);
+    str->taint().extend(std::move(op));
   }
   return str;
 }

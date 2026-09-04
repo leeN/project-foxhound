@@ -1500,7 +1500,9 @@ bool js::array_join(JSContext* cx, unsigned argc, Value* vp) {
 
   if(str->isTainted()) {
     // Foxhound: add taint operation.
-    str->taint().extend(TaintOperationFromContext(cx, "Array.join", sepstr));
+    // Foxhound: build the operation first, as it allocates which might move str.
+    TaintOperation op = TaintOperationFromContext(cx, "Array.join", sepstr);
+    str->taint().extend(std::move(op));
   }
 
   args.rval().setString(str);

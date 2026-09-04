@@ -1374,7 +1374,9 @@ taint_addTaintOperation(JSContext* cx, unsigned argc, Value* vp)
         }
     }
 
-    str->taint().extend(TaintOperation(op_chars.get(), TaintLocationFromContext(cx), taint_args));
+    // Foxhound: build the operation first, as it allocates which might move str.
+    TaintOperation op(op_chars.get(), TaintLocationFromContext(cx), taint_args);
+    str->taint().extend(std::move(op));
 
     return true;
 }
@@ -1424,7 +1426,9 @@ taint_addTaintOperation_native_full(JSContext* cx, unsigned argc, Value* vp)
         }
     }
 
-    str->taint().extend(TaintOperation(op_chars.get(), TaintLocationFromContext(cx), taint_args));
+    // Foxhound: build the operation first, as it allocates which might move str.
+    TaintOperation op(op_chars.get(), TaintLocationFromContext(cx), taint_args);
+    str->taint().extend(std::move(op));
 
     return true;
 }
@@ -1474,7 +1478,9 @@ taint_addTaintOperation_native(JSContext* cx, unsigned argc, Value* vp)
         }
     }
 
-    str->taint().extend(TaintOperation(op_chars.get(), TaintLocationFromContext(cx), taint_args));
+    // Foxhound: build the operation first, as it allocates which might move str.
+    TaintOperation op(op_chars.get(), TaintLocationFromContext(cx), taint_args);
+    str->taint().extend(std::move(op));
 
     return true;
 }
