@@ -5197,11 +5197,14 @@ JS_ReportTaintSink(JSContext* cx, JS::HandleString str, const char* sink, JS::Ha
 
   MOZ_ASSERT(!cx->isExceptionPending());
 
-  // Print a message to stdout. Also include the current JS backtrace.
   auto& firstRange = *str->taint().begin();
 
+  // Print a message to stdout. Also include the current JS backtrace.
+// Enable this with ac_add_options --enable-taintspew
+#if defined(JS_TAINTSPEW)
   std::cerr << "!!! Tainted flow into " << sink << " from " << firstRange.flow().source().name() << " !!!" << std::endl;
   // DumpBacktrace(cx);
+#endif
 
   // Report a warning to show up on the web console
   JS_ReportWarningUTF8(cx, "Tainted flow from %s into %s!", firstRange.flow().source().name(), sink);
