@@ -41,7 +41,6 @@
           // Validate the URL
           if (!url || url === "") {
             cachedExportUrl = "";
-            console.info("[Taint-Export] No export URL configured");
             return { url: "", singleMode: false };
           }
 
@@ -156,13 +155,15 @@
     }
   }
 
-  // Initialize and start listening for events
-  console.info("[Taint-Export] Starting Taint Export Service");
-
-  initializeConfig().then(() => {
+  // Initialize and start listening for events. The script is injected into every
+  // frame of every page, so it must stay silent unless an export URL is set:
+  // anything it logs lands in the page's console and in WebDriver BiDi log events.
+  initializeConfig().then(({ url }) => {
     // Only add listener after initialization completes
     window.addEventListener('__taintreport', handleTaintReport);
-    console.info("[Taint-Export] Ready to export taint flows");
+    if (url) {
+      console.info("[Taint-Export] Ready to export taint flows");
+    }
   });
 
 })(window);
