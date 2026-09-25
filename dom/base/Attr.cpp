@@ -176,8 +176,13 @@ void Attr::SetValueInternal(const nsAString& aValue, ErrorResult& aRv) {
   }
 
   RefPtr<nsAtom> nameAtom = mNodeInfo->NameAtom();
-  aRv = element->SetAttr(mNodeInfo->NamespaceID(), nameAtom,
-                         mNodeInfo->GetPrefixAtom(), aValue, nullptr, true);
+  // Foxhound: an Attr node's value, nodeValue and textContent setters all land
+  // here, and they are attribute API writes like setAttribute() is.
+  mozilla::Maybe<nsAutoString> taintHolder;
+  aRv = element->SetAttr(
+      mNodeInfo->NamespaceID(), nameAtom, mNodeInfo->GetPrefixAtom(),
+      element->TaintAttributeWrite(nameAtom, aValue, taintHolder), nullptr,
+      true);
 }
 
 bool Attr::Specified() const { return true; }

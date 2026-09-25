@@ -121,6 +121,35 @@
         assertTargetAndAttr(op, "namespaced", "data-value", "setAttributeNS");
       });
 
+      // An Attr node's value setter reaches Element::SetAttr directly rather than
+      // through setAttribute(), and so do its nodeValue and textContent setters.
+      add_task(async function test_attr_node_value_records_the_write() {
+        const div = document.getElementById("attrnode");
+        div.setAttribute("data-value", "plain");
+        div.getAttributeNode("data-value").value = String.tainted("hello");
+        const op = writeOp(div.getAttribute("data-value").taint, "Attr.value");
+        assertTargetAndAttr(op, "attrnode", "data-value", "Attr.value");
+      });
+
+      add_task(async function test_attr_node_text_content_records_the_write() {
+        const div = document.getElementById("attrtext");
+        div.setAttribute("data-value", "plain");
+        div.getAttributeNode("data-value").textContent = String.tainted("hello");
+        const op = writeOp(div.getAttribute("data-value").taint, "Attr.textContent");
+        assertTargetAndAttr(op, "attrtext", "data-value", "Attr.textContent");
+      });
+
+      // setAttributeNode() and the NamedNodeMap that backs element.attributes
+      // move a whole Attr node onto the element, which is a third entry point.
+      add_task(async function test_set_attribute_node_records_the_write() {
+        const div = document.getElementById("attrmap");
+        const attr = document.createAttribute("data-value");
+        attr.value = String.tainted("hello");
+        div.setAttributeNode(attr);
+        const op = writeOp(div.getAttribute("data-value").taint, "setAttributeNode");
+        assertTargetAndAttr(op, "attrmap", "data-value", "setAttributeNode");
+      });
+
       // The point of the operation: an attribute the HTML parser set out of
       // markup must not carry it. Reading that value back entity decodes it,
       // where reading back an attribute API write returns it verbatim, and the
@@ -167,6 +196,9 @@
       <div id="reflected"></div>
       <div id="identified"></div>
       <svg xmlns="http://www.w3.org/2000/svg"><a id="svganchor"></a></svg>
+      <div id="attrnode"></div>
+      <div id="attrtext"></div>
+      <div id="attrmap"></div>
       <div id="markup"></div>
       <div id="clean"></div>
     </div>
