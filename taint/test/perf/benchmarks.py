@@ -17,6 +17,7 @@ KRAKEN = "testing/talos/talos/tests/kraken"
 V8 = "testing/talos/talos/tests/v8_7"
 DROMAEO = "testing/talos/talos/tests/dromaeo"
 SELECTORS = "taint/test/perf/selectors"
+JOIN = "taint/test/perf/join"
 
 
 def _patch_location_driver(html):
@@ -266,6 +267,15 @@ BENCHMARKS = {
         "unit": "ms",
         "higher_is_better": False,
         "label": "Selector microbenchmark",
+    },
+    "join": {
+        "path": JOIN,
+        "driver": "driver.html",
+        "patch": patch_none,
+        "parse": parse_keyed_lists,
+        "unit": "ms",
+        "higher_is_better": False,
+        "label": "Array.join microbenchmark",
     },
 }
 
