@@ -122,6 +122,32 @@ TaintOperation TaintOperationConcat(JSContext* cx, const char* name,
 TaintOperation TaintOperationConcatWithSide(const TaintOperation& op,
                                             const char16_t* side);
 
+// Returns a copy of an Array.join operation extended with the position of one
+// tracked range in the joined result.
+//
+// `Array.join` records only the separator, which says how the elements were put
+// together but not what the tracked value was surrounded by: the array's other
+// elements are never in the flow. A consumer replaying the flow has to rebuild
+// the whole joined value, so it needs the text on either side of the range plus
+// enough structure to place it.
+//
+// The arguments appended after the separator are, in order: the element count,
+// the index of the element the range covers (`2`, or `1-2` for a range spanning
+// elements, and empty when the indices were not recorded), the result text
+// before the range and the result text after it. The two text arguments are
+// truncated at the recording cap like every other argument, so
+// prefix + value + suffix rebuilds the result exactly only in a build
+// configured with --enable-taint-full-args.
+//
+// `firstElement` and `lastElement` are UINT64_MAX when the element positions are
+// unknown, which is the case for an array too large to track them for.
+TaintOperation TaintOperationArrayJoinRange(const TaintOperation& op,
+                                            const JSLinearString* result,
+                                            uint32_t begin, uint32_t end,
+                                            uint64_t count,
+                                            uint64_t firstElement,
+                                            uint64_t lastElement);
+
 TaintOperation TaintOperationFromContext(JSContext* cx, const char* name);
 
 // Mark all tainted arguments of a function call.
