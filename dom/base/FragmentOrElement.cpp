@@ -2040,6 +2040,14 @@ static bool ContainsMarkup(const nsAString& aStr) {
 
 void FragmentOrElement::SetInnerHTMLInternal(const nsAString& aInnerHTML,
                                              ErrorResult& aError) {
+  // Foxhound: record the write in the flow of the value written, so a later
+  // read off the document can be reconstructed as a round-trip. This is the
+  // chokepoint every scripted innerHTML setter reaches -- Element, ShadowRoot
+  // and DocumentFragment -- and the parser does not write through it.
+  mozilla::Maybe<nsAutoString> taintHolder;
+  const nsAString& innerHTML =
+      TaintMarkupWrite(aInnerHTML, "element.setInnerHTML", this, taintHolder);
+
   // Keep "this" alive should be guaranteed by the caller, and also the content
   // of a template element (if this is one) should never been released by from
   // this during this call.  Therefore, using raw pointer here is safe.
@@ -2058,9 +2066,9 @@ void FragmentOrElement::SetInnerHTMLInternal(const nsAString& aInnerHTML,
   // Don't do this for elements with a weird parser insertion mode, for
   // instance setting innerHTML = "" on a <html> element should add the
   // optional <head> and <body> elements.
-  if (!target->HasWeirdParserInsertionMode() && aInnerHTML.Length() < 100 &&
-      !ContainsMarkup(aInnerHTML)) {
-    aError = nsContentUtils::SetNodeTextContent(target, aInnerHTML, false);
+  if (!target->HasWeirdParserInsertionMode() && innerHTML.Length() < 100 &&
+      !ContainsMarkup(innerHTML)) {
+    aError = nsContentUtils::SetNodeTextContent(target, innerHTML, false);
     return;
   }
 
@@ -2091,7 +2099,7 @@ void FragmentOrElement::SetInnerHTMLInternal(const nsAString& aInnerHTML,
     int32_t contextNameSpaceID = parseContext->GetNameSpaceID();
 
     aError = nsContentUtils::ParseFragmentHTML(
-        aInnerHTML, target, contextLocalName, contextNameSpaceID,
+        innerHTML, target, contextLocalName, contextNameSpaceID,
         doc->GetCompatibilityMode() == eCompatibility_NavQuirks, true);
     doc->ResumeDOMNotifications();
     if (target->GetFirstChild()) {
@@ -2101,7 +2109,7 @@ void FragmentOrElement::SetInnerHTMLInternal(const nsAString& aInnerHTML,
     mb.NodesAdded();
   } else {
     RefPtr<DocumentFragment> df = nsContentUtils::CreateContextualFragment(
-        parseContext, aInnerHTML, true, aError);
+        parseContext, innerHTML, true, aError);
     if (!aError.Failed()) {
       // Suppress assertion about node removal mutation events that can't have
       // listeners anyway, because no one has had the chance to register

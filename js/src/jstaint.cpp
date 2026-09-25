@@ -382,6 +382,52 @@ TaintOperation JS::TaintOperationConcatWithSide(const TaintOperation& op,
   return TaintOperation(op.name(), op.location(), std::move(args));
 }
 
+// Foxhound: the characters of `str` in [begin, end), truncated at the recording
+// cap like any other recorded argument.
+static std::u16string taintarg_substring(const JSLinearString* str,
+                                         uint32_t begin, uint32_t end) {
+  if (!str || begin >= end || end > str->length()) {
+    return std::u16string();
+  }
+
+  size_t length = std::min<size_t>(end - begin, max_length);
+  JS::AutoCheckCannotGC nogc;
+  if (str->hasLatin1Chars()) {
+    const JS::Latin1Char* chars = str->latin1Chars(nogc) + begin;
+    return std::u16string(chars, chars + length);
+  }
+  return std::u16string(str->twoByteChars(nogc) + begin, length);
+}
+
+static std::u16string taintarg_number(uint64_t number) {
+  return ascii2utf16(std::to_string(number));
+}
+
+TaintOperation JS::TaintOperationArrayJoinRange(const TaintOperation& op,
+                                                const JSLinearString* result,
+                                                uint32_t begin, uint32_t end,
+                                                uint64_t count,
+                                                uint64_t firstElement,
+                                                uint64_t lastElement) {
+  std::vector<std::u16string> args = op.arguments();
+
+  args.push_back(taintarg_number(count));
+
+  if (firstElement == UINT64_MAX) {
+    args.push_back(std::u16string());
+  } else if (firstElement == lastElement) {
+    args.push_back(taintarg_number(firstElement));
+  } else {
+    args.push_back(taintarg_number(firstElement) + u"-" +
+                   taintarg_number(lastElement));
+  }
+
+  args.push_back(taintarg_substring(result, 0, begin));
+  args.push_back(taintarg_substring(result, end, result ? result->length() : 0));
+
+  return TaintOperation(op.name(), op.location(), std::move(args));
+}
+
 TaintOperation JS::TaintOperationFromContext(JSContext* cx, const char* name) {
   return TaintOperation(name, TaintLocationFromContext(cx));
 }

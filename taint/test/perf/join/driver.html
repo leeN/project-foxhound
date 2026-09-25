@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Array.join benchmark</title>
+  </head>
+  <body>
+    <script>
+      // Foxhound records where each joined element landed in the result, so that
+      // a tainted range can be attributed to the element it came from. The
+      // positions are collected while the string is built, which charges every
+      // join -- tainted or not -- one vector append per element. Nothing in the
+      // standard suites covers this: Kraken and the Dromaeo array tests call
+      // join zero times, and SunSpider's handful of calls sit inside tests that
+      // are dominated by other work.
+      //
+      // The sizes below separate the fixed cost of a join from the per element
+      // cost, and 8192 is a control: positions are not tracked above 4096
+      // elements, so that case must not move while 4096 does.
+      const SMALL = ["alpha", "beta", "gamma"];
+      const MEDIUM = new Array(100).fill("x");
+      const AT_CAP = new Array(4096).fill("x");
+      const OVER_CAP = new Array(8192).fill("x");
+      // String.tainted is a Foxhound builtin; fall back so that a build without
+      // it still reports the untainted cases rather than timing out.
+      const TAINTED = [
+        "alpha",
+        String.tainted ? String.tainted("beta") : "beta",
+        "gamma",
+      ];
+
+      let sink = 0;
+
+      const cases = {
+        // The three separator lengths take three different code paths in the
+        // engine, and the position recording is wired into each of them.
+        join_3_single(n) {
+          for (let i = 0; i < n; i++) {
+            sink += SMALL.join("-").length;
+          }
+        },
+        join_3_empty(n) {
+          for (let i = 0; i < n; i++) {
+            sink += SMALL.join("").length;
+          }
+        },
+        join_3_multi(n) {
+          for (let i = 0; i < n; i++) {
+            sink += SMALL.join("<->").length;
+          }
+        },
+        join_100(n) {
+          for (let i = 0; i < n; i++) {
+            sink += MEDIUM.join("-").length;
+          }
+        },
+        join_4096(n) {
+          for (let i = 0; i < n; i++) {
+            sink += AT_CAP.join("-").length;
+          }
+        },
+        // Control: above the cap the positions are not collected, so this pays
+        // one branch per element and nothing else.
+        join_8192(n) {
+          for (let i = 0; i < n; i++) {
+            sink += OVER_CAP.join("-").length;
+          }
+        },
+        // The path that actually builds the recorded operation: one per taint
+        // range, each carrying the text on either side of it. Walking the stack
+        // for the operation's location dominates here and is not new, so read
+        // this as the cost of the arguments rather than of the recording.
+        join_tainted_3(n) {
+          for (let i = 0; i < n; i++) {
+            sink += TAINTED.join("-").length;
+          }
+        },
+      };
+
+      const ITERATIONS = {
+        join_3_single: 300000,
+        join_3_empty: 300000,
+        join_3_multi: 300000,
+        join_100: 20000,
+        join_4096: 500,
+        join_8192: 250,
+        join_tainted_3: 2000,
+      };
+
+      function run() {
+        const results = {};
+        for (const name of Object.keys(cases)) {
+          const fn = cases[name];
+          const iterations = ITERATIONS[name];
+          // Warm-up, so JIT compilation of the loop is not charged to the
+          // measurement.
+          fn(Math.min(iterations, 200));
+          const start = performance.now();
+          fn(iterations);
+          results[name] = [performance.now() - start];
+        }
+        location = "/report?" + encodeURI(JSON.stringify(results));
+      }
+
+      addEventListener("load", () => setTimeout(run, 0));
+    </script>
+  </body>
+</html>

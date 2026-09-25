@@ -242,8 +242,8 @@ nsresult MarkTaintOperation(nsAString &str, const char* name)
   return MarkTaintOperation(nsContentUtils::GetCurrentJSContext(), str, name);
 }
 
-nsresult MarkTaintOperationAttribute(nsAString &str, const char* name, const nsINode* node,
-                                     const nsAString &attr)
+nsresult MarkTaintOperation(nsAString &str, const char* name, const nsINode* node,
+                            const nsAString &arg)
 {
   if (str.isTainted()) {
     nsTArray<nsString> args;
@@ -251,11 +251,33 @@ nsresult MarkTaintOperationAttribute(nsAString &str, const char* name, const nsI
     nsAutoString elementDesc;
     DescribeElement(node, elementDesc);
     args.AppendElement(elementDesc);
-    args.AppendElement(attr);
+    args.AppendElement(arg);
 
     str.Taint().extend(GetTaintOperation(nsContentUtils::GetCurrentJSContext(), name, args));
   }
   return NS_OK;
+}
+
+const nsAString& TaintMarkupWrite(const nsAString& value, const char* name,
+                                  const nsINode* node,
+                                  mozilla::Maybe<nsAutoString>& holder,
+                                  const nsAString* position)
+{
+  if (!value.isTainted()) {
+    return value;
+  }
+
+  holder.emplace();
+  holder->Assign(value.BeginReading(), value.Length());
+  holder->AssignTaint(value.Taint());
+
+  if (position) {
+    MarkTaintOperation(*holder, name, node, *position);
+  } else {
+    MarkTaintOperation(*holder, name, node);
+  }
+
+  return *holder;
 }
 
 static nsresult MarkTaintOperation(JSContext *cx, nsAString &str, const char* name, const nsTArray<nsString> &args)
