@@ -1372,6 +1372,69 @@ static bool ArrayJoinKernel(JSContext* cx, SeparatorOp sepOp, HandleObject obj,
   return true;
 }
 
+// Foxhound: the offsets at which each joined element ends in the result, in
+// order, for every element but the last.
+using JoinElementEnds = Vector<uint32_t, 16, SystemAllocPolicy>;
+static constexpr uint64_t kMaxRecordedJoinElements = 4096;
+
+// Foxhound: work out where each element ended in the joined result, so that a
+// tainted range can be attributed to the element it came from.
+//
+// This runs after the join rather than during it. Collecting the offsets as the
+// string is built charges every join -- almost all of which carry no taint -- a
+// branch and a vector append per element, measured at up to 48% on a join
+// microbenchmark. Nothing here is spent unless the result is tainted.
+//
+// Only an array whose elements are all strings can be walked this way: anything
+// else is converted by the join, and recovering the length of the conversion
+// would mean running it again, which for an object means running script. The
+// lengths are summed and checked against the result, so an array that changed
+// under the join -- an interrupt callback can run script -- yields no offsets
+// rather than wrong ones.
+static bool RecomputeJoinElementEnds(HandleObject obj, uint64_t length,
+                                     size_t seplen, size_t resultLength,
+                                     JoinElementEnds& elementEnds) {
+  if (length > kMaxRecordedJoinElements || !obj->is<NativeObject>()) {
+    return false;
+  }
+
+  NativeObject* nobj = &obj->as<NativeObject>();
+  if (nobj->getDenseInitializedLength() < length) {
+    return false;
+  }
+
+  uint64_t total = 0;
+  for (uint32_t i = 0; i < length; i++) {
+    Value elem = nobj->getDenseElement(i);
+    if (!elem.isString()) {
+      return false;
+    }
+
+    total += elem.toString()->length();
+    if (i + 1 != length) {
+      if (!elementEnds.append(uint32_t(total))) {
+        return false;
+      }
+      total += seplen;
+    }
+  }
+
+  return total == resultLength;
+}
+
+// Foxhound: the index of the element whose text covers `offset`. An offset that
+// falls inside a separator, which a tainted separator puts there, belongs to
+// the element before it.
+static uint64_t JoinElementIndexAt(const JoinElementEnds& elementEnds,
+                                   size_t seplen, uint32_t offset) {
+  auto* start = elementEnds.begin();
+  auto* element = std::partition_point(
+      start, elementEnds.end(), [offset, seplen](uint32_t end) {
+        return uint64_t(end) + seplen <= offset;
+      });
+  return uint64_t(element - start);
+}
+
 // ES2017 draft rev 1b0184bc17fc09a8ddcf4aeec9b6d9fcac4eafce
 // 22.1.3.13 Array.prototype.join ( separator )
 bool js::array_join(JSContext* cx, unsigned argc, Value* vp) {
@@ -1492,15 +1555,36 @@ bool js::array_join(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   // Step 8.
-  // Foxhound: We have to root the string here, as we introduce the TaintOperationFromContext call, which can trigger the GC.
-  JS::Rooted<JSString*> str(cx, sb.finishString());
+  // Foxhound: We have to root the string here, as we introduce the
+  // TaintOperationFromContext call, which can trigger the GC.
+  JS::Rooted<JSLinearString*> str(cx, sb.finishString());
   if (!str) {
     return false;
   }
 
-  if(str->isTainted()) {
-    // Foxhound: add taint operation.
-    str->taint().extend(TaintOperationFromContext(cx, "Array.join", sepstr));
+  if (str->isTainted()) {
+    // Foxhound: add taint operation. The separator alone does not say what the
+    // tracked value was joined with, so record each range's position in the
+    // result: which element it came from and the text on either side of it.
+    TaintOperation op = TaintOperationFromContext(cx, "Array.join", sepstr);
+
+    JoinElementEnds elementEnds;
+    bool haveElementEnds = RecomputeJoinElementEnds(obj, length, seplen,
+                                                    str->length(), elementEnds);
+
+    str->taint().extendPerRange([&](const TaintRange& range) {
+      uint64_t firstElement = UINT64_MAX;
+      uint64_t lastElement = UINT64_MAX;
+      if (haveElementEnds) {
+        firstElement = JoinElementIndexAt(elementEnds, seplen, range.begin());
+        lastElement = JoinElementIndexAt(
+            elementEnds, seplen,
+            range.end() > range.begin() ? range.end() - 1 : range.begin());
+      }
+      return JS::TaintOperationArrayJoinRange(op, str.get(), range.begin(),
+                                              range.end(), length, firstElement,
+                                              lastElement);
+    });
   }
 
   args.rval().setString(str);

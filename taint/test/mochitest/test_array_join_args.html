@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>
+      Check that an Array.join operation records where the tracked taint range
+      sits in the joined result, not just the separator it was joined with.
+    </title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css" />
+
+    <script type="text/javascript">
+      // Array.join used to record [separator] and nothing else. The array's other
+      // elements are never in the flow, so a consumer replaying it could only pass
+      // the tainted value through: the value it rebuilt was the payload alone,
+      // narrower than the string the page actually produced.
+      //
+      // The operation now also records the element count, the index of the element
+      // the range covers, and the result text on either side of the range, so that
+      // prefix + value + suffix rebuilds the result.
+      const JOIN_OP = "Array.join";
+      const SEPARATOR = 0;
+      const COUNT = 1;
+      const INDEX = 2;
+      const PREFIX = 3;
+      const SUFFIX = 4;
+
+      // flow[0] is the most recent operation. Read `.taint` directly rather than
+      // passing the joined string to a helper: a tainted string handed to a
+      // function records a `function` op that would become the flow head.
+      function joinOp(range, name) {
+        const op = range.flow.find((o) => o.operation === JOIN_OP);
+        SimpleTest.ok(
+          !!op,
+          name + ": flow must contain " + JOIN_OP + ", got [" +
+            range.flow.map((o) => o.operation) + "]"
+        );
+        SimpleTest.is(
+          op.arguments.length,
+          5,
+          name + ": " + JOIN_OP + " records separator, count, index, prefix and suffix"
+        );
+        return op;
+      }
+
+      // What the change is for: the recorded text either side of the range plus the
+      // range itself must be the value the page built. Checking that against the
+      // result string keeps the test independent of how the engine split the ranges.
+      function checkSplice(result, taint, separator, count, name) {
+        SimpleTest.ok(taint.length > 0, name + ": the result must be tainted");
+        for (const range of taint) {
+          const op = joinOp(range, name);
+          SimpleTest.is(op.arguments[SEPARATOR], separator,
+            name + ": arguments[0] is still the separator");
+          SimpleTest.is(op.arguments[COUNT], String(count),
+            name + ": the element count is recorded");
+          SimpleTest.is(op.arguments[PREFIX], result.slice(0, range.begin),
+            name + ": the text before the range is recorded");
+          SimpleTest.is(op.arguments[SUFFIX], result.slice(range.end),
+            name + ": the text after the range is recorded");
+        }
+      }
+
+      add_task(async function test_join_records_the_surrounding_elements() {
+        const payload = String.tainted("PAYLOAD");
+        const result = ["a", payload, "c"].join("-");
+
+        SimpleTest.is(result, "a-PAYLOAD-c", "the join itself is unchanged");
+        checkSplice(result, result.taint, "-", 3, "middle element");
+        SimpleTest.is(joinOp(result.taint[0], "middle element").arguments[INDEX], "1",
+          "the tainted element's index is recorded");
+      });
+
+      add_task(async function test_join_with_an_empty_separator() {
+        // seplen == 0 takes a separator operation of its own in the engine, and it
+        // is the one that does nothing, so it is the one an element position is
+        // most easily lost in.
+        const payload = String.tainted("PAYLOAD");
+        const result = ["a", "b", payload].join("");
+
+        SimpleTest.is(result, "abPAYLOAD", "the join itself is unchanged");
+        checkSplice(result, result.taint, "", 3, "empty separator");
+        SimpleTest.is(joinOp(result.taint[0], "empty separator").arguments[INDEX], "2",
+          "the last element's index is recorded");
+      });
+
+      add_task(async function test_join_with_a_multi_character_separator() {
+        const payload = String.tainted("PAYLOAD");
+        const result = [payload, "b"].join("<->");
+
+        SimpleTest.is(result, "PAYLOAD<->b", "the join itself is unchanged");
+        checkSplice(result, result.taint, "<->", 2, "multi character separator");
+        const op = joinOp(result.taint[0], "multi character separator");
+        SimpleTest.is(op.arguments[INDEX], "0", "the first element's index is recorded");
+        SimpleTest.is(op.arguments[PREFIX], "", "nothing precedes the first element");
+      });
+
+      add_task(async function test_join_with_the_default_separator() {
+        const payload = String.tainted("PAYLOAD");
+        const result = ["a", payload].join();
+
+        SimpleTest.is(result, "a,PAYLOAD", "the join itself is unchanged");
+        checkSplice(result, result.taint, ",", 2, "default separator");
+      });
+
+      // The shape a template built out of a split and a join produces: every element
+      // but one is untainted, and the reconstruction has to put the payload back
+      // between them.
+      add_task(async function test_split_then_join_round_trip() {
+        const payload = String.tainted("b");
+        const result = ("a-" + payload + "-c").split("-").join("/");
+
+        SimpleTest.is(result, "a/b/c", "the round trip itself is unchanged");
+        checkSplice(result, result.taint, "/", 3, "split then join");
+      });
+
+      // A range can cover more than one element when neighbouring elements share a
+      // taint flow, because the ranges are merged as they are appended. Such a range
+      // did not come from a single element and must not claim to.
+      add_task(async function test_range_spanning_several_elements() {
+        const payload = String.tainted("AB");
+        const result = [payload, payload].join("");
+        const taint = result.taint;
+
+        SimpleTest.is(result, "ABAB", "the join itself is unchanged");
+        checkSplice(result, taint, "", 2, "spanning range");
+        for (const range of taint) {
+          const index = joinOp(range, "spanning range").arguments[INDEX];
+          SimpleTest.ok(
+            /^\d+(-\d+)?$/.test(index),
+            "an index must be an element or a span of them, got " + index
+          );
+          if (range.begin < payload.length && range.end > payload.length) {
+            SimpleTest.is(index, "0-1", "a range covering both elements says so");
+          }
+        }
+      });
+
+      // The separator can be the tainted value itself, and then the range sits
+      // between two elements rather than inside one.
+      add_task(async function test_tainted_separator() {
+        const payload = String.tainted("SEP");
+        const result = ["a", "b"].join(payload);
+
+        SimpleTest.is(result, "aSEPb", "the join itself is unchanged");
+        checkSplice(result, result.taint, "SEP", 2, "tainted separator");
+      });
+
+      // Element positions are not tracked for an array too large to be worth it
+      // (`new Array(1e5).join("x")` is a known idiom). The rest of the arguments
+      // must still be there: dropping the index is not a reason to record nothing.
+      add_task(async function test_large_array_still_records_the_text() {
+        const payload = String.tainted("PAYLOAD");
+        // Empty siblings keep the recorded text under the 128 character argument
+        // cap, which every test here stays below so that the splice can be
+        // compared against the result exactly.
+        const elements = new Array(5000).fill("");
+        elements[0] = "a";
+        elements[4999] = payload;
+        const result = elements.join("");
+
+        SimpleTest.is(result, "aPAYLOAD", "the join itself is unchanged");
+        checkSplice(result, result.taint, "", 5000, "large array");
+        SimpleTest.is(joinOp(result.taint[0], "large array").arguments[INDEX], "",
+          "an untracked element position is recorded as empty, not as a guess");
+      });
+
+      add_task(async function test_untainted_join_is_unchanged() {
+        const result = ["a", "b", "c"].join("-");
+        SimpleTest.is(result, "a-b-c", "an untainted join is left alone");
+        SimpleTest.is(result.taint.length, 0, "and records no taint");
+      });
+    </script>
+  </head>
+
+  <body></body>
+</html>
