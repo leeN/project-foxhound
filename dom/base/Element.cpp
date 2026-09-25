@@ -4179,8 +4179,8 @@ const nsAString& Element::RecordTaintAttributeWrite(
   aHolder.emplace();
   aHolder->Assign(aValue.BeginReading(), aValue.Length());
   aHolder->AssignTaint(aValue.Taint());
-  MarkTaintOperationAttribute(*aHolder, "element.setAttribute", this,
-                              nsAtomString(aName));
+  MarkTaintOperation(*aHolder, "element.setAttribute", this,
+                     nsAtomString(aName));
   return *aHolder;
 }
 
@@ -5657,6 +5657,12 @@ void Element::SetOuterHTML(const TrustedHTMLOrNullIsEmptyString& aOuterHTML,
   // Foxhound: outerHTML sink.
   ReportTaintSink(*compliantString, "outerHTML", this);
 
+  // Foxhound: record the write in the flow of the value written, so a later read
+  // off the document can be reconstructed as a round-trip.
+  Maybe<nsAutoString> taintHolder;
+  compliantString = &TaintMarkupWrite(*compliantString, "element.setOuterHTML",
+                                      this, taintHolder);
+
   if (OwnerDoc()->IsHTMLDocument()) {
     nsAtom* localName;
     int32_t namespaceID;
@@ -5738,6 +5744,13 @@ void Element::InsertAdjacentHTML(
     aError.Throw(NS_ERROR_DOM_SYNTAX_ERR);
     return;
   }
+
+  // Foxhound: record the write in the flow of the value written, together with
+  // the position, which decides where the parsed markup lands.
+  Maybe<nsAutoString> taintHolder;
+  compliantString =
+      &TaintMarkupWrite(*compliantString, "element.insertAdjacentHTML", this,
+                        taintHolder, &aPosition);
 
   nsCOMPtr<nsIContent> destination;
   if (position == eBeforeBegin || position == eAfterEnd) {
