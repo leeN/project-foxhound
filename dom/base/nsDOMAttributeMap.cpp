@@ -262,8 +262,13 @@ already_AddRefed<Attr> nsDOMAttributeMap::SetNamedItemNS(
   mAttributeCache.InsertOrUpdate(attrkey, RefPtr{&aAttr});
   aAttr.SetMap(this);
 
-  rv = mContent->SetAttr(ni->NamespaceID(), ni->NameAtom(), ni->GetPrefixAtom(),
-                         *compliantString, true);
+  // Foxhound: setAttributeNode() and setNamedItem() write an attribute through
+  // the attribute API too, so record the write like setAttribute() does.
+  mozilla::Maybe<nsAutoString> taintHolder;
+  rv = mContent->SetAttr(
+      ni->NamespaceID(), ni->NameAtom(), ni->GetPrefixAtom(),
+      element->TaintAttributeWrite(nameAtom, *compliantString, taintHolder),
+      true);
   if (NS_FAILED(rv)) {
     DropAttribute(ni->NamespaceID(), ni->NameAtom());
     aError.Throw(rv);
