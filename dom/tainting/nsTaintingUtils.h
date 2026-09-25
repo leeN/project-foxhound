@@ -10,6 +10,7 @@
 #ifndef nsTaintingUtils_h__
 #define nsTaintingUtils_h__
 
+#include "mozilla/Maybe.h"
 #include "mozilla/dom/DOMString.h"
 #include "mozilla/dom/Element.h"
 #include "nsINode.h"
@@ -33,14 +34,35 @@ nsresult MarkTaintOperation(nsACString &str, const char* name, const nsTArray<ns
 nsresult MarkTaintOperation(nsCString &str, const char* name, const nsTArray<nsCString> &arg);
 nsresult MarkTaintOperation(StringTaint& aTaint, const char* name);
 
-// Foxhound: Record a scripted attribute write in the flow of the value written.
-// `node` is the element written to and `attr` the attribute's local name, so a
-// consumer that later sees the value read back off the live document knows it
-// was put there through the attribute API -- where it is stored and returned
-// verbatim -- rather than parsed out of markup, where reading it back entity
-// decodes it. The two produce different results from the same recorded string.
-nsresult MarkTaintOperationAttribute(nsAString &str, const char* name, const nsINode* node,
-                                     const nsAString &attr);
+// Foxhound: Record a write to the DOM in the flow of the value written, with the
+// element written to and one further argument: the attribute's local name for an
+// attribute write, the position for insertAdjacentHTML.
+//
+// A consumer that later sees the value read back off the live document needs to
+// know how it got there. An attribute written through the attribute API is stored
+// and returned verbatim; one parsed out of markup is entity decoded on the way
+// back out. The two produce different results from the same recorded string.
+nsresult MarkTaintOperation(nsAString &str, const char* name, const nsINode* node,
+                            const nsAString &arg);
+
+// Foxhound: Record a scripted markup write in the flow of the value written, and
+// return the string to parse: a copy carrying the operation when the value is
+// tainted, and the value itself when it is not.
+//
+// This is the other half of a DOM round-trip. A flow that writes markup into the
+// document and reads it back is a desanitization mechanism in its own right --
+// what comes back out is the browser's re-serialization of what went in -- and a
+// consumer can only reproduce that if the write is in the flow too. `position` is
+// the insertAdjacentHTML position, and null for the writes that have none.
+//
+// The characters are copied before the operation is added because a caller's
+// string can share its buffer with the one handed to us and taint lives on the
+// buffer, so extending in place would retroactively add this write to the flow of
+// a string the caller still holds.
+const nsAString& TaintMarkupWrite(const nsAString& value, const char* name,
+                                  const nsINode* node,
+                                  mozilla::Maybe<nsAutoString>& holder,
+                                  const nsAString* position = nullptr);
 
 // Foxhound: Add taint source information to a string
 nsresult MarkTaintSource(nsAString &str, const char* name);

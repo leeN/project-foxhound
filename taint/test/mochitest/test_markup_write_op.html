@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>
+      Check that a scripted markup write records the write in the taint flow of
+      the value written, so that a value read back out of the live document can
+      be reconstructed as a round-trip rather than guessed at.
+    </title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css" />
+
+    <script type="text/javascript">
+      // A flow that puts a value into the DOM and reads it back is a
+      // desanitization mechanism in its own right: what comes back out of
+      // innerHTML is the browser's re-serialization of what went in, and an
+      // attribute read back off parsed markup is entity decoded. Only the read
+      // was recorded, so a consumer seeing a value off the live document had no
+      // way to tell how it got there. These operations are the other half.
+      const INNER = "element.setInnerHTML";
+      const OUTER = "element.setOuterHTML";
+      const ADJACENT = "element.insertAdjacentHTML";
+
+      // Takes the value's `taint` array rather than the value itself: handing a
+      // tainted string to any function records a `function` op that would become
+      // the flow head.
+      function flowOf(taint, name) {
+        SimpleTest.ok(taint.length > 0, name + ": the read value must be tainted");
+        return taint[0].flow;
+      }
+
+      function writeOp(taint, operation, name) {
+        const flow = flowOf(taint, name);
+        const op = flow.find((o) => o.operation === operation);
+        SimpleTest.ok(
+          !!op,
+          name + ": flow must contain " + operation + ", got [" +
+            flow.map((o) => o.operation) + "]"
+        );
+        return op;
+      }
+
+      function assertTarget(op, id, name) {
+        SimpleTest.ok(
+          op.arguments && op.arguments.length >= 1,
+          name + ": the write must record the element, got [" + op.arguments + "]"
+        );
+        SimpleTest.ok(
+          typeof op.arguments[0] === "string" && op.arguments[0].includes(id),
+          name + ": arguments[0] must locate the element written to (#" + id +
+            "): " + op.arguments[0]
+        );
+      }
+
+      add_task(async function test_innerHTML_round_trip() {
+        const div = document.getElementById("inner");
+        div.innerHTML = String.tainted("hello");
+        const op = writeOp(div.innerHTML.taint, INNER, "innerHTML");
+        assertTarget(op, "inner", "innerHTML");
+      });
+
+      // A short string with no markup takes a fast path that sets the text
+      // content instead of parsing, so it needs covering separately from the one
+      // that goes through the parser.
+      add_task(async function test_innerHTML_markup_goes_through_the_parser() {
+        const div = document.getElementById("parsed");
+        div.innerHTML = "<span>" + String.tainted("hello") + "</span>";
+        const op = writeOp(div.firstChild.textContent.taint, INNER, "parsed markup");
+        assertTarget(op, "parsed", "parsed markup");
+      });
+
+      // The round-trip the operation exists for: a value written as markup and
+      // read back off an attribute comes back entity decoded, which is a
+      // different result from the same value written through setAttribute.
+      add_task(async function test_attribute_read_back_off_written_markup() {
+        const div = document.getElementById("attr");
+        div.innerHTML =
+          "<span data-value='" + String.tainted("hello") + "&amp;'>x</span>";
+        const value = div.firstChild.getAttribute("data-value");
+
+        SimpleTest.is(value, "hello&", "reading the attribute back entity decodes it");
+        const op = writeOp(value.taint, INNER, "attribute read back");
+        assertTarget(op, "attr", "attribute read back");
+      });
+
+      // The read must sit above the write: the value was put there first and read
+      // back afterwards, and a consumer replays a flow in that order.
+      add_task(async function test_read_is_above_the_write() {
+        const div = document.getElementById("order");
+        div.innerHTML = String.tainted("hello");
+        const flow = flowOf(div.innerHTML.taint, "order");
+        const read = flow.findIndex((o) => o.operation === "element.innerHTML");
+        const write = flow.findIndex((o) => o.operation === INNER);
+        SimpleTest.ok(
+          read >= 0 && write > read,
+          "element.innerHTML must sit above " + INNER + ", got [" +
+            flow.map((o) => o.operation) + "]"
+        );
+      });
+
+      add_task(async function test_outerHTML_records_the_write() {
+        const div = document.getElementById("outer");
+        div.outerHTML = "<div id='outer'>" + String.tainted("hello") + "</div>";
+        const replacement = document.getElementById("outer");
+        const op = writeOp(replacement.innerHTML.taint, OUTER, "outerHTML");
+        assertTarget(op, "outer", "outerHTML");
+      });
+
+      // insertAdjacentHTML also records the position, which is what decides where
+      // the parsed markup lands relative to the element.
+      add_task(async function test_insertAdjacentHTML_records_the_position() {
+        const div = document.getElementById("adjacent");
+        div.insertAdjacentHTML("beforeend", "<span>" + String.tainted("hello") + "</span>");
+        const op = writeOp(div.firstChild.textContent.taint, ADJACENT, "insertAdjacentHTML");
+        assertTarget(op, "adjacent", "insertAdjacentHTML");
+        SimpleTest.is(op.arguments[1], "beforeend",
+          "arguments[1] is the position the markup was inserted at");
+      });
+
+      // ShadowRoot has an innerHTML setter of its own. It reaches the same
+      // chokepoint, which is why the operation is recorded there rather than on
+      // the Element setter.
+      add_task(async function test_shadow_root_innerHTML_records_the_write() {
+        const host = document.getElementById("shadow");
+        const root = host.attachShadow({ mode: "open" });
+        root.innerHTML = "<span>" + String.tainted("hello") + "</span>";
+        writeOp(root.firstChild.textContent.taint, INNER, "shadow root");
+      });
+
+      // The operation is recorded at the markup writes and nowhere else: a value
+      // put into the DOM through the attribute API is stored and returned
+      // verbatim, which is a different reconstruction from a value parsed out of
+      // markup, and telling those apart is what the operations are for.
+      add_task(async function test_attribute_write_records_no_markup_write() {
+        const div = document.getElementById("static");
+        div.setAttribute("data-value", String.tainted("hello"));
+        const flow = flowOf(div.getAttribute("data-value").taint, "static");
+        SimpleTest.ok(
+          !flow.some((o) => o.operation === INNER),
+          "an attribute API write records no " + INNER + ", got [" +
+            flow.map((o) => o.operation) + "]"
+        );
+      });
+
+      // An untainted write must not be copied or annotated, and must still be
+      // stored: the taint path is not allowed to change what the DOM does.
+      // Unlike an attribute read, reading markup back is not a taint source, so
+      // what says the write was left alone is that nothing came back tainted.
+      add_task(async function test_untainted_write_is_untouched() {
+        const div = document.getElementById("clean");
+        div.innerHTML = "<span>plain</span>";
+
+        SimpleTest.is(div.firstChild.textContent, "plain",
+          "an untainted markup write is parsed unchanged");
+        SimpleTest.is(div.innerHTML.taint.length, 0,
+          "and records no taint of its own");
+      });
+    </script>
+  </head>
+
+  <body>
+    <div id="fixture" style="display: none">
+      <div id="inner"></div>
+      <div id="parsed"></div>
+      <div id="attr"></div>
+      <div id="order"></div>
+      <div id="outer"></div>
+      <div id="adjacent"></div>
+      <div id="shadow"></div>
+      <div id="static"></div>
+      <div id="clean"></div>
+    </div>
+  </body>
+</html>
