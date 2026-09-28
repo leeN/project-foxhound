@@ -29,6 +29,15 @@
         "gamma",
       ];
 
+      // ~8KB joined, with the tainted element in the middle, so the text
+      // recorded either side of the range is thousands of characters rather
+      // than the 128 a capped build keeps.
+      const TAINTED_LONG = [];
+      for (let i = 0; i < 200; i++) {
+        TAINTED_LONG.push("x".repeat(20));
+      }
+      TAINTED_LONG[100] = TAINTED[1];
+
       let sink = 0;
 
       const cases = {
@@ -75,6 +84,15 @@
             sink += TAINTED.join("-").length;
           }
         },
+        // The same recording against a result long enough for the argument cap
+        // to matter. Recorded string arguments are truncated at 128 characters
+        // unless the build lifts the cap, and the text either side of a range is
+        // as long as the join, so this is the case where lifting it is paid for.
+        join_tainted_long(n) {
+          for (let i = 0; i < n; i++) {
+            sink += TAINTED_LONG.join("-").length;
+          }
+        },
       };
 
       const ITERATIONS = {
@@ -85,6 +103,7 @@
         join_4096: 500,
         join_8192: 250,
         join_tainted_3: 2000,
+        join_tainted_long: 2000,
       };
 
       function run() {
