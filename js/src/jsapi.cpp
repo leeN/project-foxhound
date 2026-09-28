@@ -5225,7 +5225,13 @@ JS_ReportTaintSink(JSContext* cx, JS::HandleString str, const char* sink, JS::Ha
       "if (typeof window !== 'undefined' && typeof document !== 'undefined') {\n"
       "    var t = window;\n"
       "    if (location.protocol == 'javascript:' || location.protocol == 'data:' || location.protocol == 'about:') {\n"
-      "        t = parent.window;\n"
+      // Foxhound: a data: or about: document has an opaque origin, so the parent
+      // is often cross-origin and dispatching there throws. Only redirect when
+      // we can actually touch the parent.
+      "        try {\n"
+      "            if (parent.document) { t = parent.window; }\n"
+      "        } catch (e) {\n"
+      "        }\n"
       "    }\n"
       "    var pl;\n"
       "    try {\n"
@@ -5274,7 +5280,7 @@ JS_ReportTaintSink(JSContext* cx, JS::HandleString str, const char* sink, JS::Ha
   RootedObject stack(cx);
   if (!JS::CaptureCurrentStack(cx, &stack,
                                JS::StackCapture(JS::AllFrames()))) {
-    JS_ReportErrorUTF8(cx, "Invalid stack object in CaptureCurrentStack!");
+    JS_ClearPendingException(cx);
     return;
   }
 
@@ -5288,8 +5294,12 @@ JS_ReportTaintSink(JSContext* cx, JS::HandleString str, const char* sink, JS::Ha
   }
 
   RootedValue retVal(cx);
-  JS_CallFunction(cx, nullptr, report, arguments, &retVal);
-  MOZ_ASSERT(!cx->isExceptionPending());
+  // Foxhound: taint reporting is invisible to content by contract, so a report
+  // we cannot deliver has to be dropped rather than leave an exception pending
+  // for unrelated script to trip over.
+  if (!JS_CallFunction(cx, nullptr, report, arguments, &retVal)) {
+    JS_ClearPendingException(cx);
+  }
 
 // Enable this with ac_add_options --enable-taintspew
 #if defined(JS_TAINTSPEW)
