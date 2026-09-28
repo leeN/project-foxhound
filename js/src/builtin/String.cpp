@@ -3992,12 +3992,6 @@ static JSString* ReplaceAll(JSContext* cx, JSLinearString* string,
     return nullptr;
   }
 
-  // Foxhound: extend the taint flow
-  if(result.taint().hasTaint()) {
-    result.taint().extend(
-      TaintOperationFromContextJSString(cx, "replaceAll", searchString, replaceString));
-  }
-
   // Step 16.
   auto* resultString = result.finishString();
   if (!resultString) {
@@ -4131,7 +4125,8 @@ JSString* js::str_replaceAll_string_raw(JSContext* cx, HandleString string,
 
   // Directly return when we're guaranteed to find no match.
   if (searchLength > stringLength) {
-    return string;
+    // Foxhound: copy string to add taint operation later on
+    return NewDependentString(cx, string, 0, stringLength);
   }
 
   Rooted<JSLinearString*> str(cx, string->ensureLinear(cx));
