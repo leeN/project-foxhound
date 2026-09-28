@@ -1485,7 +1485,11 @@ static bool str_toLocaleLowerCase(JSContext* cx, unsigned argc, Value* vp) {
     // Foxhound: propagate taint and add operation
     MOZ_ASSERT(result.isString());
     if(str->isTainted()) {
-      result.toString()->setTaint(cx, str->taint().safeCopy().extend(TaintOperationFromContext(cx, "toLocaleLowerCase", str)));
+      // Foxhound: finish the taint first, as building it allocates which might
+      // move result's string.
+      SafeStringTaint taint = str->taint().safeCopy();
+      taint.extend(TaintOperationFromContext(cx, "toLocaleLowerCase", str));
+      result.toString()->setTaint(cx, taint);
     }
 
     args.rval().set(result);
@@ -1843,7 +1847,11 @@ static bool str_toLocaleUpperCase(JSContext* cx, unsigned argc, Value* vp) {
     // Foxhound: propagate taint and add operation
     MOZ_ASSERT(result.isString());
     if(str->isTainted()) {
-      result.toString()->setTaint(cx, str->taint().safeCopy().extend(TaintOperationFromContext(cx, "toLocaleUpperCase", str)));
+      // Foxhound: finish the taint first, as building it allocates which might
+      // move result's string.
+      SafeStringTaint taint = str->taint().safeCopy();
+      taint.extend(TaintOperationFromContext(cx, "toLocaleUpperCase", str));
+      result.toString()->setTaint(cx, taint);
     }
 
     args.rval().set(result);
@@ -2061,14 +2069,18 @@ static bool str_normalize(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-  JSString* ret = NormalizeString(cx, form, str);
+  // Foxhound: rooted because TaintOperationFromContext can trigger GC
+  Rooted<JSString*> ret(cx, NormalizeString(cx, form, str));
   if (!ret) {
     return false;
   }
 
-  // Foxhound: Add taint operation.
+  // Foxhound: Add taint operation. Finish the taint first, as building it
+  // allocates.
   if (str->isTainted()) {
-    ret->setTaint(cx, str->taint().safeCopy().extend(TaintOperationFromContext(cx, "normalize", str)));
+    SafeStringTaint taint = str->taint().safeCopy();
+    taint.extend(TaintOperationFromContext(cx, "normalize", str));
+    ret->setTaint(cx, taint);
   }
 
   // Step 7.
@@ -2302,10 +2314,16 @@ static bool str_charAt(JSContext* cx, unsigned argc, Value* vp) {
   }
   MOZ_ASSERT(*index < str->length());
 
-  // Foxhound: avoid atoms here if the base string is tainted. TODO(samuel)
-  if (str->isTainted() && index.isSome()) {
+  // Foxhound: avoid atoms here if the base string is tainted.
+  if (str->isTainted()) {
     str = NewDependentString(cx, str, index.value(), 1);
-    str->taint().extend(TaintOperation("charAt", TaintLocationFromContext(cx), { taintarg(cx, index.value()) }));
+    if (!str) {
+      return false;
+    }
+    // Foxhound: build the operation first, as it allocates which might move str->taint()'s result.
+    TaintOperation op("charAt", TaintLocationFromContext(cx),
+                      { taintarg(cx, index.value()) });
+    str->taint().extend(std::move(op));
     args.rval().setString(str);
   } else { // Foxhound: only use static string if not tainted
     // Step 6.
@@ -3315,16 +3333,16 @@ static JSLinearString* TrimString(JSContext* cx, JSString* str, bool trimStart,
   // the acutal trimming of taint ranges has been done in
   // NewDependentString (StringType-inl.h, JSDependentString::init)
   if (result && result->isTainted()) {
-    AutoCheckCannotGC nogc;
-    if (trimStart && trimEnd) {
-      result->taint().extend(TaintOperationFromContext(cx, "trim"));
-    } else if (trimStart) {
-      result->taint().extend(TaintOperationFromContext(cx, "trimStart"));
-    } else if (trimEnd) {
-      result->taint().extend(TaintOperationFromContext(cx, "trimEnd"));
-    } else {
-      result->taint().extend(TaintOperationFromContext(cx, "trim"));
+    // Foxhound: no AutoCheckCannotGC -- TaintOperationFromContext can trigger
+    // GC. Build the operation before touching result->taint().
+    const char* name = "trim";
+    if (trimStart && !trimEnd) {
+      name = "trimStart";
+    } else if (trimEnd && !trimStart) {
+      name = "trimEnd";
     }
+    TaintOperation op = TaintOperationFromContext(cx, name);
+    result->taint().extend(std::move(op));
   }
 
   return result;
@@ -4247,8 +4265,9 @@ static ArrayObject* SplitHelper(JSContext* cx, Handle<JSLinearString*> str,
 
     // Step 14.c.ii.1.
     size_t subLength = size_t(endIndex - sepLength - lastEndIndex);
-    JSString* sub =
-        NewDependentString(cx, str, lastEndIndex, subLength, gcHeap);
+    // Foxhound: rooted because TaintLocationFromContext can trigger GC
+    JS::Rooted<JSString*> sub(
+        cx, NewDependentString(cx, str, lastEndIndex, subLength, gcHeap));
 
     // Steps 14.c.ii.2-4.
     if (!sub || !NewbornArrayPush(cx, substrings, StringValue(sub))) {
@@ -4256,9 +4275,10 @@ static ArrayObject* SplitHelper(JSContext* cx, Handle<JSLinearString*> str,
     }
 
     if(sub->isTainted()) {
-      // Foxhound: extend taint flow
-      sub->taint().extend(TaintOperation("split", TaintLocationFromContext(cx),
-                                        { taintarg(cx, sep), taintarg(cx, count++) }));
+      // Foxhound: extend taint flow. Build the operation first, as that allocates and might move sub.
+      TaintOperation op("split", TaintLocationFromContext(cx),
+                        { taintarg(cx, sep), taintarg(cx, count++) });
+      sub->taint().extend(std::move(op));
     }
 
     // Step 14.c.ii.5.
@@ -4275,7 +4295,9 @@ static ArrayObject* SplitHelper(JSContext* cx, Handle<JSLinearString*> str,
 
   // Step 15.
   size_t subLength = strLength - lastEndIndex;
-  JSString* sub = NewDependentString(cx, str, lastEndIndex, subLength, gcHeap);
+  // Foxhound: rooted, see the loop above.
+  JS::Rooted<JSString*> sub(
+      cx, NewDependentString(cx, str, lastEndIndex, subLength, gcHeap));
 
   // Steps 16-17.
   if (!sub || !NewbornArrayPush(cx, substrings, StringValue(sub))) {
@@ -4284,7 +4306,9 @@ static ArrayObject* SplitHelper(JSContext* cx, Handle<JSLinearString*> str,
 
   // Foxhound: extend taint flow
   if(sub->isTainted()) {
-    sub->taint().extend(TaintOperation("split", TaintLocationFromContext(cx), { taintarg(cx, sep), taintarg(cx, count++) }));
+    TaintOperation op("split", TaintLocationFromContext(cx),
+                      { taintarg(cx, sep), taintarg(cx, count++) });
+    sub->taint().extend(std::move(op));
   }
 
   // Step 18.
@@ -4326,7 +4350,10 @@ static ArrayObject* CharSplitHelper(JSContext* cx, Handle<JSLinearString*> str,
     }
     // Foxhound: extend taint flow
     if(sub->isTainted()) {
-      sub->taint().extend(TaintOperation("split", TaintLocationFromContext(cx), { taintarg(cx, u""), taintarg(cx, count++) }));
+      // Foxhound: build the operation first; see SplitSingleCharHelper.
+      TaintOperation op("split", TaintLocationFromContext(cx),
+                        { taintarg(cx, u""), taintarg(cx, count++) });
+      sub->taint().extend(std::move(op));
     }
 
     splits->initDenseElement(i, StringValue(sub));
@@ -4393,14 +4420,17 @@ static ArrayObject* SplitSingleCharHelper(JSContext* cx,
     }
 
     size_t subLength = index - lastEndIndex;
-    JSString* sub = NewDependentString(cx, str, lastEndIndex, subLength);
+    // Foxhound: rooted as taintarg() can trigger GC
+    JS::Rooted<JSString*> sub(
+        cx, NewDependentString(cx, str, lastEndIndex, subLength));
     if (!sub) {
       return nullptr;
     }
-    // Foxhound: extend taint flow
+    // Foxhound: extend taint flow. Build the operation first, as that allocates and might move sub.
     if(sub->isTainted()) {
-      sub->taint().extend(TaintOperation("split", loc,
-                                         { sep, taintarg(cx, int32_t(splitsIndex)) }));
+      TaintOperation op("split", loc,
+                        { sep, taintarg(cx, int32_t(splitsIndex)) });
+      sub->taint().extend(std::move(op));
     }
     splits->initDenseElement(splitsIndex++, StringValue(sub));
     lastEndIndex = index + 1;
@@ -4408,15 +4438,17 @@ static ArrayObject* SplitSingleCharHelper(JSContext* cx,
   MOZ_ASSERT(lastEndIndex <= textLen);
 
   // Add substring for tail of string (after last match).
-  JSString* sub =
-      NewDependentString(cx, str, lastEndIndex, textLen - lastEndIndex);
+  // Foxhound: rooted, see the loop above.
+  JS::Rooted<JSString*> sub(
+      cx, NewDependentString(cx, str, lastEndIndex, textLen - lastEndIndex));
   if (!sub) {
     return nullptr;
   }
   // Foxhound: extend taint flow
   if(sub->isTainted()) {
-    sub->taint().extend(TaintOperation("split", loc,
-                                       { sep, taintarg(cx, int32_t(splitsIndex)) }));
+    TaintOperation op("split", loc,
+                      { sep, taintarg(cx, int32_t(splitsIndex)) });
+    sub->taint().extend(std::move(op));
   }
 
   splits->initDenseElement(splitsIndex++, StringValue(sub));
