@@ -18,6 +18,7 @@ V8 = "testing/talos/talos/tests/v8_7"
 DROMAEO = "testing/talos/talos/tests/dromaeo"
 SELECTORS = "taint/test/perf/selectors"
 JOIN = "taint/test/perf/join"
+SPEEDOMETER = "third_party/webkit/PerformanceTests"
 
 
 def _patch_location_driver(html):
@@ -113,6 +114,82 @@ def parse_keyed_lists(raw):
     data = json.loads(raw)
     data.pop("v", None)
     return {k: [float(x) for x in v] for k, v in data.items()}
+
+
+# Speedometer drives twelve TodoMVC implementations through add, edit, complete
+# and delete cycles, which is the only benchmark here that produces taint of its
+# own: the apps read input.value and element attributes, look elements up with
+# querySelector, and write the results back through innerHTML and setAttribute.
+# Every other suite runs with no tainted value in the page at all, so none of
+# them can see the cost of recording one.
+#
+# Its own harness hook, resources/benchmark-report.js, only engages for ?gecko
+# and then loads ../resources/runner.js from outside the directory the harness
+# copies, so drive the page's own client instead, the way the V8 patch does.
+#
+# The whole PerformanceTests directory is served rather than Speedometer alone,
+# because index.html loads ../resources/statistics.js from a sibling directory.
+# Serving only Speedometer leaves that a 404 and the run never finishes.
+#
+# Five iterations rather than the stock ten: the harness already averages over
+# rounds, and both builds run the same configuration, so this halves the run
+# without changing what is compared. That makes the absolute numbers incomparable
+# with a published Speedometer score.
+#
+# The jQuery-TodoMVC suite needs the tainted tiny property key fix in
+# ParserAtom::instantiateAtom. Without it the suite throws partway through and
+# takes the whole run with it, because Handlebars compiles the template read out
+# of a <script> element -- a taint source -- and the compiled code looks up
+# helpers["if"] with a two character key.
+SPEEDOMETER_ITERATIONS = 5
+
+
+def patch_speedometer(html):
+    shim = """
+<script>
+// A failure here would otherwise show up as the harness timing out with no clue
+// why, so report it as a result instead.
+var lastTest = "(none)";
+addEventListener("error", function (e) {
+  location = "/report?" + encodeURI(JSON.stringify(
+      {error: String(e.message || e) + " in " + lastTest}));
+});
+// DOMContentLoaded, not load: the deferred scripts have run by then so the client
+// exists, and <body onload="startTest()"> has not fired yet, so the settings below
+// are in place before the page starts itself. Starting it here as well would run a
+// second benchmark concurrently with the page's own.
+addEventListener("DOMContentLoaded", function () {
+  var client = window.benchmarkClient;
+  var perIteration = [];
+  var origWillRunTest = client.willRunTest;
+  client.willRunTest = function (suite, test) {
+    lastTest = suite.name + "/" + test.name;
+    return origWillRunTest.apply(this, arguments);
+  };
+  var origDidRunSuites = client.didRunSuites;
+  client.didRunSuites = function (measuredValues) {
+    perIteration.push(measuredValues);
+    return origDidRunSuites.apply(this, arguments);
+  };
+  // Replaces rather than wraps: the original renders the result into the page,
+  // which is pointless here and would run after we have navigated away.
+  client.didFinishLastIteration = function () {
+    var out = {};
+    perIteration.forEach(function (measuredValues) {
+      var tests = measuredValues.tests || {};
+      for (var suite in tests) {
+        (out[suite] = out[suite] || []).push(tests[suite].total || 0);
+      }
+    });
+    location = "/report?" + encodeURI(JSON.stringify(out));
+  };
+  client.iterationCount = ITERATIONS;
+});
+</script>
+</body>""".replace("ITERATIONS", str(SPEEDOMETER_ITERATIONS))
+    if "</body>" not in html:
+        raise RuntimeError("could not find </body> to insert the Speedometer shim")
+    return html.replace("</body>", shim, 1)
 
 
 def parse_v8(raw):
@@ -267,6 +344,15 @@ BENCHMARKS = {
         "unit": "ms",
         "higher_is_better": False,
         "label": "Selector microbenchmark",
+    },
+    "speedometer": {
+        "path": SPEEDOMETER,
+        "driver": "Speedometer/index.html",
+        "patch": patch_speedometer,
+        "parse": parse_keyed_lists,
+        "unit": "ms",
+        "higher_is_better": False,
+        "label": "Speedometer 2.0",
     },
     "join": {
         "path": JOIN,
