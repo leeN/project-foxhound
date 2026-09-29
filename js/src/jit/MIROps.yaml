@@ -3018,6 +3018,19 @@
   alias_set: none
   generate_lir: true
 
+# Foxhound: bail out if the string is tainted. Used in front of inline paths
+# that rebuild a string from its char codes, which would drop the taint.
+- name: GuardStringUntainted
+  operands:
+    string: String
+  result_type: String
+  guard: true
+  movable: true
+  congruent_to: if_operands_equal
+  alias_set: none
+  generate_lir: true
+  lir_result_type: none
+
 - name: GuardStringToInt32
   operands:
     string: String
