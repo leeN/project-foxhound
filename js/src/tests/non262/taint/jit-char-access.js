@@ -34,7 +34,17 @@ function charAccessTest() {
   ], "UNTAINTED", "TAINTED");
 }
 
+// MSubstr folded these single character substrings into char access.
+function singleCharSubstringTest() {
+  checkHot([
+    [s => s.substring(0, 1), "substring"],
+    [s => s.slice(-1), "slice"],
+    [s => s.substr(-1), "substr"],
+  ], "untainted", "tainted");
+}
+
 charAccessTest();
+singleCharSubstringTest();
 
 if (typeof reportCompare === "function")
   reportCompare(true, true);
