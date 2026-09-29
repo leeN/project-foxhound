@@ -4759,6 +4759,15 @@ void CodeGenerator::visitGuardIsNotProxy(LGuardIsNotProxy* guard) {
   bailoutFrom(&bail, guard->snapshot());
 }
 
+void CodeGenerator::visitGuardStringUntainted(LGuardStringUntainted* guard) {
+  Register str = ToRegister(guard->string());
+
+  Label bail;
+  masm.branchPtr(Assembler::NotEqual, Address(str, JSString::offsetOfTaint()),
+                 ImmPtr(nullptr), &bail);
+  bailoutFrom(&bail, guard->snapshot());
+}
+
 void CodeGenerator::visitGuardIsNotDOMProxy(LGuardIsNotDOMProxy* guard) {
   Register proxy = ToRegister(guard->proxy());
   Register temp = ToRegister(guard->temp0());

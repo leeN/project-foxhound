@@ -5911,6 +5911,16 @@ void LIRGenerator::visitGuardIsNotProxy(MGuardIsNotProxy* ins) {
   redefine(ins, ins->object());
 }
 
+void LIRGenerator::visitGuardStringUntainted(MGuardStringUntainted* ins) {
+  MOZ_ASSERT(ins->string()->type() == MIRType::String);
+
+  auto* lir =
+      new (alloc()) LGuardStringUntainted(useRegister(ins->string()));
+  assignSnapshot(lir, ins->bailoutKind());
+  add(lir, ins);
+  redefine(ins, ins->string());
+}
+
 void LIRGenerator::visitGuardIsNotDOMProxy(MGuardIsNotDOMProxy* ins) {
   MOZ_ASSERT(ins->proxy()->type() == MIRType::Object);
 
