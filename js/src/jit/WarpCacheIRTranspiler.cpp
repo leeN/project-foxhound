@@ -2700,6 +2700,11 @@ bool WarpCacheIRTranspiler::emitLoadStringCharResult(StringOperandId strId,
   MDefinition* str = getOperand(strId);
   MDefinition* index = getOperand(indexId);
 
+  // Foxhound: the result is rebuilt from a char code, which drops taint.
+  auto* untainted = MGuardStringUntainted::New(alloc(), str);
+  add(untainted);
+  str = untainted;
+
   if (handleOOB) {
     auto* charCode = MCharCodeAtOrNegative::New(alloc(), str, index);
     add(charCode);
@@ -2731,6 +2736,11 @@ bool WarpCacheIRTranspiler::emitLoadStringAtResult(StringOperandId strId,
                                                    bool handleOOB) {
   MDefinition* str = getOperand(strId);
   MDefinition* index = getOperand(indexId);
+
+  // Foxhound: the result is rebuilt from a char code, which drops taint.
+  auto* untainted = MGuardStringUntainted::New(alloc(), str);
+  add(untainted);
+  str = untainted;
 
   if (handleOOB) {
     auto* charCode = MCharCodeAtOrNegative::New(alloc(), str, index);
