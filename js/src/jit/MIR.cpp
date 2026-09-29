@@ -2132,6 +2132,12 @@ static bool IsSubstrLast(MSubstr* substr, int32_t start) {
 }
 
 MDefinition* MSubstr::foldsTo(TempAllocator& alloc) {
+  // Foxhound: the charAt form below builds the result from a char code, which
+  // drops the string's taint. MSubstr itself takes a taint aware slow path.
+  if (true) {
+    return this;
+  }
+
   // Fold |str.substring(0, 1)| to |str.charAt(0)|.
   if (IsSubstrTo(this, 1)) {
     MOZ_ASSERT(IsConstantZeroInt32(begin()));
