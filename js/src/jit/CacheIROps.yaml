@@ -3447,6 +3447,15 @@
     rhs: StringId
     stub: JitCodeField
 
+# Foxhound: like ConcatStringsResult, but does not record a concat operation.
+- name: ConcatStringsQuietResult
+  shared: true
+  transpile: true
+  cost_estimate: 5
+  args:
+    lhs: StringId
+    rhs: StringId
+
 - name: CallStringObjectConcatResult
   shared: false
   transpile: false

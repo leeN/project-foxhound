@@ -149,7 +149,11 @@ function FUNC_NAME(
 #endif
 
   // Step 15.m.ii.
-  var accumulatedResult = Substring(S, 0, position) + replacement;
+  // Foxhound: the caller records the replace operation on the result.
+  var accumulatedResult = ConcatStringsQuiet(
+    Substring(S, 0, position),
+    replacement
+  );
 
   // Step 16.
   if (nextSourcePosition >= lengthS) {
@@ -157,8 +161,8 @@ function FUNC_NAME(
   }
 
   // Step 17.
-  return (
-    accumulatedResult +
+  return ConcatStringsQuiet(
+    accumulatedResult,
     Substring(S, nextSourcePosition, lengthS - nextSourcePosition)
   );
 }

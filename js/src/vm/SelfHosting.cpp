@@ -1503,6 +1503,60 @@ taint_copyString(JSContext* cx, unsigned argc, Value* vp)
     return true;
 }
 
+// Foxhound: concatenates two strings without recording a concat operation, for
+// builtins that record their own operation on the result.
+static bool
+taint_concatStringsQuiet(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(args.length() == 2 && args[0].isString() && args[1].isString());
+
+    RootedString left(cx, args[0].toString());
+    RootedString right(cx, args[1].toString());
+
+    JSString* res = ConcatStringsQuiet<CanGC>(cx, left, right);
+    if (!res) {
+        return false;
+    }
+
+    args.rval().setString(res);
+    return true;
+}
+
+// Foxhound: whether args[0] is this realm's self-hosted function named
+// args[1], e.g. the builtin RegExp.prototype[@@replace].
+static bool
+taint_isBuiltinRegExpMethod(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(args.length() == 2 && args[1].isString());
+
+    JSAtom* name = AtomizeString(cx, args[1].toString());
+    if (!name) {
+        return false;
+    }
+
+    args.rval().setBoolean(
+        IsSelfHostedFunctionWithName(args[0], name) &&
+        args[0].toObject().as<JSFunction>().realm() == cx->realm());
+    return true;
+}
+
+// Foxhound: records RegExp.prototype.exec on a match result.
+static bool
+taint_addRegExpExecTaintOperation(JSContext* cx, unsigned argc, Value* vp)
+{
+    // regexp, match result
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(args.length() == 2);
+
+    Rooted<RegExpObject*> regexp(cx, &args[0].toObject().as<RegExpObject>());
+    Rooted<ArrayObject*> result(cx, &args[1].toObject().as<ArrayObject>());
+
+    args.rval().setUndefined();
+    return AddRegExpExecTaintOperation(cx, regexp, result);
+}
+
 static bool
 taint_setTaintForSubString(JSContext* cx, unsigned argc, Value* vp)
 {
@@ -1723,6 +1777,8 @@ static bool intrinsic_CanBeHeldWeakly(JSContext* cx, unsigned argc, Value* vp) {
 
 static const JSFunctionSpec intrinsic_functions[] = {
     // Intrinsic helper functions
+    JS_FN("AddRegExpExecTaintOperation", taint_addRegExpExecTaintOperation, 2,
+          0),
     JS_FN("AddTaintOperation", taint_addTaintOperation, 2, 0),
     JS_FN("AddTaintOperationNative", taint_addTaintOperation_native, 2, 0),
     JS_FN("AddTaintOperationNativeFull", taint_addTaintOperation_native_full, 2, 0),
@@ -1774,6 +1830,8 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_INLINABLE_FN("CanOptimizeArraySpecies",
                     intrinsic_CanOptimizeArraySpecies, 1, 0,
                     IntrinsicCanOptimizeArraySpecies),
+    JS_INLINABLE_FN("ConcatStringsQuiet", taint_concatStringsQuiet, 2, 0,
+                    IntrinsicConcatStringsQuiet),
     JS_FN("ConstructFunction", intrinsic_ConstructFunction, 2, 0),
     JS_FN("ConstructorForTypedArray", intrinsic_ConstructorForTypedArray, 1, 0),
     JS_FN("CopyDataPropertiesOrGetOwnKeys",
@@ -1867,6 +1925,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
           intrinsic_IsInstanceOfBuiltin<AsyncFunctionGeneratorObject>, 1, 0),
     JS_FN("IsAsyncGeneratorObject",
           intrinsic_IsInstanceOfBuiltin<AsyncGeneratorObject>, 1, 0),
+    JS_FN("IsBuiltinRegExpMethod", taint_isBuiltinRegExpMethod, 2, 0),
     JS_INLINABLE_FN("IsCallable", intrinsic_IsCallable, 1, 0,
                     IntrinsicIsCallable),
     JS_INLINABLE_FN("IsConstructing", intrinsic_IsConstructing, 0, 0,

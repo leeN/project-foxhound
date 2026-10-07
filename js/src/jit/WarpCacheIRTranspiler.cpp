@@ -3869,6 +3869,18 @@ bool WarpCacheIRTranspiler::emitConcatStringsResult(StringOperandId lhsId,
   return true;
 }
 
+bool WarpCacheIRTranspiler::emitConcatStringsQuietResult(
+    StringOperandId lhsId, StringOperandId rhsId) {
+  MDefinition* lhs = getOperand(lhsId);
+  MDefinition* rhs = getOperand(rhsId);
+
+  auto* ins = MConcat::New(alloc(), lhs, rhs, /* quiet = */ true);
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
 bool WarpCacheIRTranspiler::emitCompareResult(
     JSOp op, OperandId lhsId, OperandId rhsId,
     MCompare::CompareType compareType) {

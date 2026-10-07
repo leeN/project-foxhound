@@ -1557,6 +1557,7 @@
     lhs: WordSized
     rhs: WordSized
   num_temps: 5
+  mir_op: true
 
 # Test if a string includes the constant search string.
 - name: StringIncludesSIMD

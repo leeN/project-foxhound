@@ -165,9 +165,14 @@ function FUNC_NAME(
     }
 
     // Step 15.m.ii.
-    accumulatedResult +=
-      Substring(S, nextSourcePosition, position - nextSourcePosition) +
-      replacement;
+    // Foxhound: the caller records the replace operation on the result.
+    accumulatedResult = ConcatStringsQuiet(
+      accumulatedResult,
+      ConcatStringsQuiet(
+        Substring(S, nextSourcePosition, position - nextSourcePosition),
+        replacement
+      )
+    );
 
     // Step 15.m.iii.
     nextSourcePosition = lastIndex;
@@ -204,8 +209,8 @@ function FUNC_NAME(
   }
 
   // Step 17.
-  return (
-    accumulatedResult +
+  return ConcatStringsQuiet(
+    accumulatedResult,
     Substring(S, nextSourcePosition, lengthS - nextSourcePosition)
   );
 }

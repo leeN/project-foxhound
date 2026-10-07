@@ -265,7 +265,7 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   void visitNewObjectVMCall(LNewObject* lir);
 
   void emitConcat(LInstruction* lir, Register lhs, Register rhs,
-                  Register output);
+                  Register output, bool quiet);
 
   void emitInstanceOf(LInstruction* ins, Register protoReg);
 

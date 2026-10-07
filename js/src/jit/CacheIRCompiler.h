@@ -875,6 +875,13 @@ class MOZ_RAII CacheIRCompiler {
       ObjOperandId objId, IntPtrOperandId indexId, uint32_t valueId,
       ArrayBufferViewKind viewKind);
 
+  using ConcatStringsFn = JSString* (*)(JSContext*, HandleString, HandleString,
+                                        js::gc::Heap);
+
+  template <ConcatStringsFn fn>
+  [[nodiscard]] bool emitConcatStrings(StringOperandId lhsId,
+                                       StringOperandId rhsId);
+
   void emitActivateIterator(Register objBeingIterated, Register iterObject,
                             Register nativeIter, Register scratch,
                             Register scratch2, uint32_t enumeratorsAddrOffset);

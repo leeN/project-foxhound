@@ -34,7 +34,7 @@ function String_match(regexp) {
     // Fast path for regular expressions with the original
     // RegExp.prototype[@@match] function.
     if (IsOptimizableRegExpObject(regexp)) {
-      var ret = callFunction(RegExpMatch, regexp, this);
+      var ret = callFunction(RegExpMatchKernel, regexp, this);
       addTaintToArray(ret, "match", regexp);
       return ret;
     }
@@ -47,7 +47,10 @@ function String_match(regexp) {
       if (!IsObject(regexp)) {
         RegExpSymbolProtocolOnPrimitiveCounter();
       }
-      var ret = callContentFunction(matcher, regexp, this);
+      // Foxhound: the builtin @@match would record the operation itself.
+      var ret = IsBuiltinRegExpMethod(matcher, "RegExpMatch")
+        ? callFunction(RegExpMatchKernel, regexp, this)
+        : callContentFunction(matcher, regexp, this);
       addTaintToArray(ret, "match", regexp);
       return ret;
     }
@@ -76,7 +79,11 @@ function String_match(regexp) {
   }
 
   // Step 5.
-  var ret = callContentFunction(GetMethod(rx, GetBuiltinSymbol("match")), rx, S);
+  var matcher = GetMethod(rx, GetBuiltinSymbol("match"));
+  // Foxhound: the builtin @@match would record the operation itself.
+  var ret = IsBuiltinRegExpMethod(matcher, "RegExpMatch")
+    ? callFunction(RegExpMatchKernel, rx, S)
+    : callContentFunction(matcher, rx, S);
   addTaintToArray(ret, "match", regexp);
   return ret;
 }
@@ -243,7 +250,7 @@ function String_replace(searchValue, replaceValue) {
     // Fast path for regular expressions with the original
     // RegExp.prototype[@@replace] function.
     if (IsOptimizableRegExpObject(searchValue)) {
-      var ret = callFunction(RegExpReplace, searchValue, this, replaceValue);
+      var ret = callFunction(RegExpReplaceKernel, searchValue, this, replaceValue);
       // Foxhound: ret could be a function, only taint strings.
       if (typeof (ret) === "string") {
         AddTaintOperationNativeFull(ret, "replace", searchValue, replaceValue);
@@ -259,7 +266,10 @@ function String_replace(searchValue, replaceValue) {
       if (!IsObject(searchValue)) {
         RegExpSymbolProtocolOnPrimitiveCounter();
       }
-      var ret = callContentFunction(replacer, searchValue, this, replaceValue);
+      // Foxhound: the builtin @@replace would record the operation itself.
+      var ret = IsBuiltinRegExpMethod(replacer, "RegExpReplace")
+        ? callFunction(RegExpReplaceKernel, searchValue, this, replaceValue)
+        : callContentFunction(replacer, searchValue, this, replaceValue);
       // Foxhound: ret could be a function, only taint strings.
       if (typeof (ret) === "string") {
         AddTaintOperationNativeFull(ret, "replace", searchValue, replaceValue);
@@ -314,10 +324,14 @@ function String_replace(searchValue, replaceValue) {
     newString = Substring(string, 0, pos);
   }
 
-  newString += replStr;
+  // Foxhound: the replace operation below is recorded instead.
+  newString = ConcatStringsQuiet(newString, replStr);
   var stringLength = string.length;
   if (tailPos < stringLength) {
-    newString += Substring(string, tailPos, stringLength - tailPos);
+    newString = ConcatStringsQuiet(
+      newString,
+      Substring(string, tailPos, stringLength - tailPos)
+    );
   }
 
   AddTaintOperationNativeFull(newString, "replace", searchValue, replaceValue);
@@ -357,7 +371,7 @@ function String_replaceAll(searchValue, replaceValue) {
     // Fast path for regular expressions with the original
     // RegExp.prototype[@@replace] function.
     if (IsOptimizableRegExpObject(searchValue)) {
-      var ret = callFunction(RegExpReplace, searchValue, this, replaceValue);
+      var ret = callFunction(RegExpReplaceKernel, searchValue, this, replaceValue);
       AddTaintOperationNativeFull(ret, "replaceAll", searchValue, replaceValue);
       return ret;
     }
@@ -367,7 +381,10 @@ function String_replaceAll(searchValue, replaceValue) {
 
     // Step 2.b.
     if (replacer !== undefined) {
-      var ret = callContentFunction(replacer, searchValue, this, replaceValue);
+      // Foxhound: the builtin @@replace would record the operation itself.
+      var ret = IsBuiltinRegExpMethod(replacer, "RegExpReplace")
+        ? callFunction(RegExpReplaceKernel, searchValue, this, replaceValue)
+        : callContentFunction(replacer, searchValue, this, replaceValue);
       // Foxhound: ret could be a function, only taint strings.
       if (typeof (ret) === "string") {
         AddTaintOperationNativeFull(ret, "replaceAll", searchValue, replaceValue);
@@ -450,7 +467,11 @@ function String_replaceAll(searchValue, replaceValue) {
     );
 
     // Step 14.d.
-    result += stringSlice + replacement;
+    // Foxhound: the replaceAll operation below is recorded instead.
+    result = ConcatStringsQuiet(
+      result,
+      ConcatStringsQuiet(stringSlice, replacement)
+    );
 
     // Step 14.e.
     endOfLastMatch = position + searchLength;
@@ -462,7 +483,10 @@ function String_replaceAll(searchValue, replaceValue) {
   // Step 15.
   if (endOfLastMatch < string.length) {
     // Step 15.a.
-    result += Substring(string, endOfLastMatch, string.length - endOfLastMatch);
+    result = ConcatStringsQuiet(
+      result,
+      Substring(string, endOfLastMatch, string.length - endOfLastMatch)
+    );
   }
 
   AddTaintOperationNativeFull(result, "replaceAll", searchValue, replaceValue);

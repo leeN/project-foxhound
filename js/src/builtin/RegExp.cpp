@@ -133,21 +133,6 @@ bool js::CreateRegExpMatchResult(JSContext* cx, HandleRegExpShared re,
     return false;
   }
 
-  Rooted<JSAtom*> src(cx, re->getSource());
-  RootedString srcStr(cx, EscapeRegExpPattern(cx, src));
-
-  // Foxhound: build the flags string in canonical order (dgimsuvy) so the
-  // taint operation records the full regular expression, not just its body.
-  std::u16string flagsStr;
-  if (re->hasIndices()) flagsStr += 'd';
-  if (re->global()) flagsStr += 'g';
-  if (re->ignoreCase()) flagsStr += 'i';
-  if (re->multiline()) flagsStr += 'm';
-  if (re->dotAll()) flagsStr += 's';
-  if (re->unicode()) flagsStr += 'u';
-  if (re->unicodeSets()) flagsStr += 'v';
-  if (re->sticky()) flagsStr += 'y';
-
   // Steps 28-29 and 33 a-d: Initialize the elements of the match result.
   // Store a Value for each match pair.
   for (size_t i = 0; i < numPairs; i++) {
@@ -158,20 +143,10 @@ bool js::CreateRegExpMatchResult(JSContext* cx, HandleRegExpShared re,
       arr->setDenseInitializedLength(i + 1);
       arr->initDenseElement(i, UndefinedValue());
     } else {
-      // Foxhound: rooted, as building the taint operation below can GC
-      // before str is stored in arr.
-      Rooted<JSLinearString*> str(
-          cx, NewDependentString(cx, input, pair.start, pair.length()));
+      JSLinearString* str =
+          NewDependentString(cx, input, pair.start, pair.length());
       if (!str) {
         return false;
-      }
-      // Foxhound: taint propagated by NewDependentString, just need to add the
-      // operation here. Build it first, it can GC and move str.
-      if (str->taint().hasTaint()) {
-        TaintOperation op("RegExp.prototype.exec", TaintLocationFromContext(cx),
-                          {taintarg_jsstring_full(cx, srcStr), flagsStr,
-                           taintarg_jsstring(cx, str), taintarg(cx, i)});
-        str->taint().extend(std::move(op));
       }
       arr->setDenseInitializedLength(i + 1);
       arr->initDenseElement(i, StringValue(str));
@@ -431,6 +406,51 @@ bool js::ExecuteRegExpLegacy(JSContext* cx, RegExpStatics* res,
   }
 
   return CreateRegExpMatchResult(cx, shared, input, matches, rval);
+}
+
+// Foxhound: records RegExp.prototype.exec on the tainted strings of a match
+// result. Only the exec the page calls records it; builtins such as match,
+// replace and split use the same match results and record their own operation.
+bool js::AddRegExpExecTaintOperation(JSContext* cx,
+                                     Handle<RegExpObject*> regexp,
+                                     Handle<ArrayObject*> result) {
+  RootedString srcStr(cx);
+  std::u16string flagsStr;
+
+  for (uint32_t i = 0; i < result->getDenseInitializedLength(); i++) {
+    Value v = result->getDenseElement(i);
+    if (!v.isString() || !v.toString()->taint().hasTaint()) {
+      continue;
+    }
+
+    if (!srcStr) {
+      Rooted<JSAtom*> src(cx, regexp->getSource());
+      srcStr = EscapeRegExpPattern(cx, src);
+      if (!srcStr) {
+        return false;
+      }
+
+      // Canonical order (dgimsuvy), so the operation records the full regular
+      // expression, not just its body.
+      RegExpFlags flags = regexp->getFlags();
+      if (flags.hasIndices()) flagsStr += 'd';
+      if (flags.global()) flagsStr += 'g';
+      if (flags.ignoreCase()) flagsStr += 'i';
+      if (flags.multiline()) flagsStr += 'm';
+      if (flags.dotAll()) flagsStr += 's';
+      if (flags.unicode()) flagsStr += 'u';
+      if (flags.unicodeSets()) flagsStr += 'v';
+      if (flags.sticky()) flagsStr += 'y';
+    }
+
+    // Building the operation can GC and move the string.
+    RootedString str(cx, result->getDenseElement(i).toString());
+    TaintOperation op("RegExp.prototype.exec", TaintLocationFromContext(cx),
+                      {taintarg_jsstring_full(cx, srcStr), flagsStr,
+                       taintarg_jsstring(cx, str), taintarg(cx, i)});
+    str->taint().extend(std::move(op));
+  }
+  return true;
 }
 
 static bool CheckPatternSyntaxSlow(JSContext* cx, Handle<JSAtom*> pattern,
