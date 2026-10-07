@@ -57,6 +57,11 @@ JSObject* InitRegExpClass(JSContext* cx, HandleObject obj);
                                            const MatchPairs& matches,
                                            MutableHandleValue rval);
 
+// Foxhound: record RegExp.prototype.exec on the tainted strings of |result|.
+[[nodiscard]] bool AddRegExpExecTaintOperation(JSContext* cx,
+                                               Handle<RegExpObject*> regexp,
+                                               Handle<ArrayObject*> result);
+
 [[nodiscard]] extern bool RegExpMatcher(JSContext* cx, unsigned argc,
                                         Value* vp);
 

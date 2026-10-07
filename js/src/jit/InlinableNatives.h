@@ -238,6 +238,7 @@
   _(IntrinsicToLength)                             \
   _(IntrinsicIsConstructing)                       \
   _(IntrinsicSubstringKernel)                      \
+  _(IntrinsicConcatStringsQuiet)                   \
   _(IntrinsicIsPackedArray)                        \
                                                    \
   _(IntrinsicIsSuspendedGenerator)                 \

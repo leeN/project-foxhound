@@ -8041,6 +8041,33 @@ AttachDecision InlinableNativeIRGenerator::tryAttachSubstringKernel() {
   return AttachDecision::Attach;
 }
 
+AttachDecision InlinableNativeIRGenerator::tryAttachConcatStringsQuiet() {
+  // Self-hosted code calls this with (string, string) arguments.
+  MOZ_ASSERT(argsLength() == 2);
+  MOZ_ASSERT(arg(0).isString());
+  MOZ_ASSERT(arg(1).isString());
+
+  JitCode* code = cx_->zone()->jitZone()->ensureStubExists(
+      cx_, JitZone::StubKind::StringConcat);
+  if (!code) {
+    cx_->recoverFromOutOfMemory();
+    return AttachDecision::NoAction;
+  }
+
+  initializeInputOperand();
+
+  ValOperandId arg0Id = loadArgumentIntrinsic(ArgumentKind::Arg0);
+  StringOperandId lhsId = writer.guardToString(arg0Id);
+
+  ValOperandId arg1Id = loadArgumentIntrinsic(ArgumentKind::Arg1);
+  StringOperandId rhsId = writer.guardToString(arg1Id);
+
+  writer.concatStringsQuietResult(lhsId, rhsId);
+
+  trackAttached("ConcatStringsQuiet");
+  return AttachDecision::Attach;
+}
+
 static bool CanConvertToString(const Value& v) {
   return v.isString() || v.isNumber() || v.isBoolean() || v.isNullOrUndefined();
 }
@@ -13131,6 +13158,8 @@ AttachDecision InlinableNativeIRGenerator::tryAttachStub() {
       return tryAttachGuardToClass(native);
     case InlinableNative::IntrinsicSubstringKernel:
       return tryAttachSubstringKernel();
+    case InlinableNative::IntrinsicConcatStringsQuiet:
+      return tryAttachConcatStringsQuiet();
     case InlinableNative::IntrinsicIsConstructing:
       return tryAttachIsConstructing();
     case InlinableNative::IntrinsicNewArrayIterator:

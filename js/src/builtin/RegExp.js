@@ -108,6 +108,14 @@ function AdvanceStringIndex(S, index) {
 // ES2023 draft rev 2c78e6f6b5bc6bfbf79dd8a12a9593e5b57afcd2
 // 22.2.5.8 RegExp.prototype [ @@match ] ( string )
 function RegExpMatch(string) {
+  // Foxhound: String.prototype.match calls the kernel and records its own
+  // operation; this records it for direct calls.
+  var ret = callFunction(RegExpMatchKernel, this, string);
+  addTaintToArray(ret, "match", this);
+  return ret;
+}
+
+function RegExpMatchKernel(string) {
   // Step 1.
   var rx = this;
 
@@ -246,6 +254,14 @@ function RegExpGlobalMatchOpt(rx, S, fullUnicode) {
 // ES2023 draft rev 2c78e6f6b5bc6bfbf79dd8a12a9593e5b57afcd2
 // 22.2.5.11 RegExp.prototype [ @@replace ] ( string, replaceValue )
 function RegExpReplace(string, replaceValue) {
+  // Foxhound: String.prototype.replace and replaceAll call the kernel and
+  // record their own operation; this records it for direct calls.
+  var ret = callFunction(RegExpReplaceKernel, this, string, replaceValue);
+  AddTaintOperationNativeFull(ret, "replace", this, replaceValue);
+  return ret;
+}
+
+function RegExpReplaceKernel(string, replaceValue) {
   // Step 1.
   var rx = this;
 
@@ -471,9 +487,14 @@ function RegExpReplaceSlowPath(
     // Step 15.m.
     if (position >= nextSourcePosition) {
       // Step 15.m.ii.
-      accumulatedResult +=
-        Substring(S, nextSourcePosition, position - nextSourcePosition) +
-        replacement;
+      // Foxhound: the caller records the replace operation on the result.
+      accumulatedResult = ConcatStringsQuiet(
+        accumulatedResult,
+        ConcatStringsQuiet(
+          Substring(S, nextSourcePosition, position - nextSourcePosition),
+          replacement
+        )
+      );
 
       // Step 15.m.iii.
       nextSourcePosition = position + matchLength;
@@ -486,8 +507,8 @@ function RegExpReplaceSlowPath(
   }
 
   // Step 17.
-  return (
-    accumulatedResult +
+  return ConcatStringsQuiet(
+    accumulatedResult,
     Substring(S, nextSourcePosition, lengthS - nextSourcePosition)
   );
 }
@@ -756,9 +777,14 @@ function RegExpGlobalReplaceOptSimple(rx, S, lengthS, replaceValue, flags) {
     lastIndex = RegExpSearcherLastLimit(S);
 
     // Step 15.m.ii.
-    accumulatedResult +=
-      Substring(S, nextSourcePosition, position - nextSourcePosition) +
-      replaceValue;
+    // Foxhound: the caller records the replace operation on the result.
+    accumulatedResult = ConcatStringsQuiet(
+      accumulatedResult,
+      ConcatStringsQuiet(
+        Substring(S, nextSourcePosition, position - nextSourcePosition),
+        replaceValue
+      )
+    );
 
     // Step 15.m.iii.
     nextSourcePosition = lastIndex;
@@ -780,8 +806,8 @@ function RegExpGlobalReplaceOptSimple(rx, S, lengthS, replaceValue, flags) {
   }
 
   // Step 17.
-  return (
-    accumulatedResult +
+  return ConcatStringsQuiet(
+    accumulatedResult,
     Substring(S, nextSourcePosition, lengthS - nextSourcePosition)
   );
 }
@@ -1177,7 +1203,12 @@ function RegExp_prototype_Exec(string) {
   var S = ToString(string);
 
   // Step 6.
-  return RegExpBuiltinExec(R, S);
+  var result = RegExpBuiltinExec(R, S);
+  // Foxhound: only the exec the page calls records the operation.
+  if (result !== null) {
+    AddRegExpExecTaintOperation(R, result);
+  }
+  return result;
 }
 
 // ES6 21.2.5.13.
@@ -1405,6 +1436,10 @@ function RegExpStringIteratorNext() {
           REGEXP_STRING_ITERATOR_LASTINDEX_DONE
         );
       }
+
+      // Foxhound: matchAll yields exec results, record the operation as the
+      // exec call in the slow path below does.
+      AddRegExpExecTaintOperation(regexp, match);
 
       // Steps 11.a.iii and 11.b.ii.
       result.value = match;

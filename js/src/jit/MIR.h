@@ -5872,8 +5872,11 @@ class MBigIntPtrBitNot : public MUnaryInstruction, public NoTypePolicy::Data {
 class MConcat : public MBinaryInstruction,
                 public MixPolicy<ConvertToStringPolicy<0>,
                                  ConvertToStringPolicy<1>>::Data {
-  MConcat(MDefinition* left, MDefinition* right)
-      : MBinaryInstruction(classOpcode, left, right) {
+  // Foxhound: do not record a concat operation on the result.
+  bool quiet_;
+
+  MConcat(MDefinition* left, MDefinition* right, bool quiet = false)
+      : MBinaryInstruction(classOpcode, left, right), quiet_(quiet) {
     // At least one input should be definitely string
     MOZ_ASSERT(left->type() == MIRType::String ||
                right->type() == MIRType::String);
@@ -5886,15 +5889,19 @@ class MConcat : public MBinaryInstruction,
   INSTRUCTION_HEADER(Concat)
   TRIVIAL_NEW_WRAPPERS
 
+  bool quiet() const { return quiet_; }
+
   MDefinition* foldsTo(TempAllocator& alloc) override;
   bool congruentTo(const MDefinition* ins) const override {
-    return congruentIfOperandsEqual(ins);
+    return ins->isConcat() && ins->toConcat()->quiet() == quiet_ &&
+           congruentIfOperandsEqual(ins);
   }
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 
   [[nodiscard]] bool writeRecoverData(
       CompactBufferWriter& writer) const override;
-  bool canRecoverOnBailout() const override { return true; }
+  // Foxhound: recovery records a concat operation.
+  bool canRecoverOnBailout() const override { return !quiet_; }
 
   ALLOW_CLONE(MConcat)
 };

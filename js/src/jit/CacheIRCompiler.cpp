@@ -10289,11 +10289,11 @@ bool CacheIRCompiler::emitObjectToStringResult(ObjOperandId objId) {
   return true;
 }
 
-bool CacheIRCompiler::emitConcatStringsResult(StringOperandId lhsId,
-                                              StringOperandId rhsId,
-                                              uint32_t stubOffset) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-
+// Foxhound: shared by ConcatStringsResult and ConcatStringsQuietResult, which
+// differ only in the VM function called for the slow path.
+template <CacheIRCompiler::ConcatStringsFn ConcatFn>
+bool CacheIRCompiler::emitConcatStrings(StringOperandId lhsId,
+                                        StringOperandId rhsId) {
   AutoCallVM callvm(masm, this, allocator);
   const AutoOutputRegister& output = callvm.output();
 
@@ -10353,11 +10353,24 @@ bool CacheIRCompiler::emitConcatStringsResult(StringOperandId lhsId,
 
     using Fn =
         JSString* (*)(JSContext*, HandleString, HandleString, js::gc::Heap);
-    callvm.call<Fn, ConcatStrings<CanGC>>();
+    callvm.call<Fn, ConcatFn>();
   }
 
   masm.bind(&done);
   return true;
+}
+
+bool CacheIRCompiler::emitConcatStringsResult(StringOperandId lhsId,
+                                              StringOperandId rhsId,
+                                              uint32_t stubOffset) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+  return emitConcatStrings<ConcatStrings<CanGC>>(lhsId, rhsId);
+}
+
+bool CacheIRCompiler::emitConcatStringsQuietResult(StringOperandId lhsId,
+                                                   StringOperandId rhsId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+  return emitConcatStrings<ConcatStringsQuiet<CanGC>>(lhsId, rhsId);
 }
 
 bool CacheIRCompiler::emitCallIsSuspendedGeneratorResult(ValOperandId valId) {

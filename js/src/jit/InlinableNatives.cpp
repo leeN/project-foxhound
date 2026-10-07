@@ -175,6 +175,7 @@ bool js::jit::CanInlineNativeCrossRealm(InlinableNative native) {
     case InlinableNative::IntrinsicIsConstructing:
     case InlinableNative::IntrinsicIsSuspendedGenerator:
     case InlinableNative::IntrinsicSubstringKernel:
+    case InlinableNative::IntrinsicConcatStringsQuiet:
     case InlinableNative::IntrinsicGuardToArrayIterator:
     case InlinableNative::IntrinsicGuardToMapIterator:
     case InlinableNative::IntrinsicGuardToSetIterator:

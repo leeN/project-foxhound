@@ -13498,12 +13498,20 @@ void CodeGenerator::visitSameValue(LSameValue* lir) {
 }
 
 void CodeGenerator::emitConcat(LInstruction* lir, Register lhs, Register rhs,
-                               Register output) {
+                               Register output, bool quiet) {
   using Fn =
       JSString* (*)(JSContext*, HandleString, HandleString, js::gc::Heap);
-  OutOfLineCode* ool = oolCallVM<Fn, ConcatStrings<CanGC>>(
-      lir, ArgList(lhs, rhs, static_cast<Imm32>(int32_t(gc::Heap::Default))),
-      StoreRegisterTo(output));
+  auto args =
+      ArgList(lhs, rhs, static_cast<Imm32>(int32_t(gc::Heap::Default)));
+  // Foxhound: a quiet concat does not record a concat operation.
+  OutOfLineCode* ool;
+  if (quiet) {
+    ool = oolCallVM<Fn, ConcatStringsQuiet<CanGC>>(lir, args,
+                                                   StoreRegisterTo(output));
+  } else {
+    ool = oolCallVM<Fn, ConcatStrings<CanGC>>(lir, args,
+                                              StoreRegisterTo(output));
+  }
 
   JitCode* stringConcatStub =
       snapshot_->getZoneStub(JitZone::StubKind::StringConcat);
@@ -13528,7 +13536,7 @@ void CodeGenerator::visitConcat(LConcat* lir) {
   MOZ_ASSERT(ToRegister(lir->temp4()) == CallTempReg4);
   MOZ_ASSERT(output == CallTempReg5);
 
-  emitConcat(lir, lhs, rhs, output);
+  emitConcat(lir, lhs, rhs, output, lir->mir()->quiet());
 }
 
 static void CopyStringChars(MacroAssembler& masm, Register to, Register from,
