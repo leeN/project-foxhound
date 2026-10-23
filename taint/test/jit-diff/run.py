@@ -29,8 +29,10 @@ CONFIGS = {
     "blinterp": "--blinterp-eager --no-baseline --no-ion",
     "baseline": "--baseline-eager --no-ion",
     "ion-eager": "--ion-eager --ion-offthread-compile=off",
-    "default": "",
-    "fast-warmup": "--fast-warmup",
+    # Off-thread compilation would make the tier switch point, and with it
+    # the results, vary between runs.
+    "default": "--ion-offthread-compile=off",
+    "fast-warmup": "--fast-warmup --ion-offthread-compile=off",
 }
 
 
