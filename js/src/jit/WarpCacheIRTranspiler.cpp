@@ -588,6 +588,16 @@ bool WarpCacheIRTranspiler::emitGuardIsNotProxy(ObjOperandId objId) {
   return true;
 }
 
+bool WarpCacheIRTranspiler::emitGuardStringUntainted(StringOperandId strId) {
+  MDefinition* str = getOperand(strId);
+
+  auto* ins = MGuardStringUntainted::New(alloc(), str);
+  add(ins);
+
+  setOperand(strId, ins);
+  return true;
+}
+
 bool WarpCacheIRTranspiler::emitGuardIsNotDOMProxy(ObjOperandId objId) {
   MDefinition* obj = getOperand(objId);
 
@@ -2700,11 +2710,6 @@ bool WarpCacheIRTranspiler::emitLoadStringCharResult(StringOperandId strId,
   MDefinition* str = getOperand(strId);
   MDefinition* index = getOperand(indexId);
 
-  // Foxhound: the result is rebuilt from a char code, which drops taint.
-  auto* untainted = MGuardStringUntainted::New(alloc(), str);
-  add(untainted);
-  str = untainted;
-
   if (handleOOB) {
     auto* charCode = MCharCodeAtOrNegative::New(alloc(), str, index);
     add(charCode);
@@ -2736,11 +2741,6 @@ bool WarpCacheIRTranspiler::emitLoadStringAtResult(StringOperandId strId,
                                                    bool handleOOB) {
   MDefinition* str = getOperand(strId);
   MDefinition* index = getOperand(indexId);
-
-  // Foxhound: the result is rebuilt from a char code, which drops taint.
-  auto* untainted = MGuardStringUntainted::New(alloc(), str);
-  add(untainted);
-  str = untainted;
 
   if (handleOOB) {
     auto* charCode = MCharCodeAtOrNegative::New(alloc(), str, index);

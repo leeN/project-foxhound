@@ -488,6 +488,15 @@
   args:
     obj: ObjId
 
+# Foxhound: fail when the string is tainted. Emitted in front of fast paths
+# that would drop the taint.
+- name: GuardStringUntainted
+  shared: true
+  transpile: true
+  cost_estimate: 1
+  args:
+    str: StringId
+
 - name: GuardToArrayBuffer
   shared: true
   transpile: true

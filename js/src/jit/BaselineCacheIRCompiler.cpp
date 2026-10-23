@@ -1153,10 +1153,6 @@ bool BaselineCacheIRCompiler::emitLoadStringCharResult(
     return false;
   }
 
-  // Foxhound: also check whether the string is tainted
-  BranchIfStringTainted(masm, str, failure->label(),
-                        TaintGuard::ICLoadStringChar);
-
   // Bounds check, load string char.
   Label done;
   Label tagResult;

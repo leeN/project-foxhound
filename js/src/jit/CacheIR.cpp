@@ -2780,6 +2780,8 @@ AttachDecision GetPropIRGenerator::tryAttachStringChar(ValOperandId valId,
   }
 
   StringOperandId strId = writer.guardToString(valId);
+  // Foxhound: the char is loaded as a static string, which has no taint.
+  writer.guardStringUntainted(strId);
   Int32OperandId int32IndexId = EmitGuardToInt32Index(writer, idVal_, indexId);
   if (attach == AttachStringChar::Linearize) {
     strId = writer.linearizeForCharAccess(strId, int32IndexId);
@@ -8204,6 +8206,12 @@ AttachDecision InlinableNativeIRGenerator::tryAttachStringChar(
   // Guard this is a string.
   ValOperandId thisValId = loadThis(calleeId);
   StringOperandId strId = writer.guardToString(thisValId);
+
+  // Foxhound: charAt and at load the char as a static string, which has no
+  // taint.
+  if (kind == StringChar::CharAt || kind == StringChar::At) {
+    writer.guardStringUntainted(strId);
+  }
 
   // Guard int32 index.
   Int32OperandId int32IndexId;

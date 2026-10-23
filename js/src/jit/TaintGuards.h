@@ -20,7 +20,7 @@ class MacroAssembler;
 // Foxhound: every JIT fast path that reads or builds string contents leaves
 // tainted strings to a slow path. Each such check is one of these.
 #define FOR_EACH_TAINT_GUARD(_) \
-  _(ICLoadStringChar)           \
+  _(ICGuardStringUntainted)     \
   _(ICLoadStringCharCode)       \
   _(RegExpMatchSubstring)       \
   _(Substr)                     \

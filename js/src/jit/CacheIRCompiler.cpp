@@ -4837,6 +4837,20 @@ bool CacheIRCompiler::emitLoadStringLengthResult(StringOperandId strId) {
   return true;
 }
 
+bool CacheIRCompiler::emitGuardStringUntainted(StringOperandId strId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+  Register str = allocator.useRegister(masm, strId);
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  BranchIfStringTainted(masm, str, failure->label(),
+                        TaintGuard::ICGuardStringUntainted);
+  return true;
+}
+
 bool CacheIRCompiler::emitLoadStringCharCodeResult(StringOperandId strId,
                                                    Int32OperandId indexId,
                                                    bool handleOOB) {
