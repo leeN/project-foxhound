@@ -28,7 +28,8 @@ class MacroAssembler;
   _(LinearizeString)            \
   _(CharCodeAt)                 \
   _(ToLowerCase)                \
-  _(AtomizeSlot)
+  _(AtomizeSlot)                \
+  _(GuardStringUntainted)
 
 enum class TaintGuard : uint8_t {
 #define DEFINE_GUARD(name) name,

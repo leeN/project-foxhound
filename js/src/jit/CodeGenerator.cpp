@@ -4761,8 +4761,7 @@ void CodeGenerator::visitGuardStringUntainted(LGuardStringUntainted* guard) {
   Register str = ToRegister(guard->string());
 
   Label bail;
-  masm.branchPtr(Assembler::NotEqual, Address(str, JSString::offsetOfTaint()),
-                 ImmPtr(nullptr), &bail);
+  BranchIfStringTainted(masm, str, &bail, TaintGuard::GuardStringUntainted);
   bailoutFrom(&bail, guard->snapshot());
 }
 
