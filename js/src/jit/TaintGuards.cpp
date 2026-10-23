@@ -6,10 +6,14 @@
 
 #include "jit/TaintGuards.h"
 
+#include "mozilla/Sprintf.h"
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "jit/MacroAssembler.h"
+#include "threading/Thread.h"
 #include "util/GetPidProvider.h"
 #include "vm/StringType.h"
 
@@ -26,19 +30,47 @@ static const char* const sTaintGuardNames[] = {
 #undef GUARD_NAME
 };
 
-static void DumpTaintGuardCounts() {
+static void WriteTaintGuardCounts(FILE* out) {
   for (size_t i = 0; i < size_t(TaintGuard::Count); i++) {
-    fprintf(stderr, "[taint-guard] pid=%d %s %llu\n", int(getpid()),
+    fprintf(out, "[taint-guard] pid=%d %s %llu\n", int(getpid()),
             sTaintGuardNames[i], (unsigned long long)sTaintGuardHits[i]);
+  }
+}
+
+static void DumpTaintGuardCounts() { WriteTaintGuardCounts(stderr); }
+
+// Content processes end with an immediate exit that skips atexit, so in
+// directory mode the counts are rewritten to <dir>/taint-guards.<pid> once a
+// second instead.
+static void WriteTaintGuardCountsLoop(const char* dir) {
+  char path[1024];
+  char tmp[1040];
+  SprintfLiteral(path, "%s/taint-guards.%d", dir, int(getpid()));
+  SprintfLiteral(tmp, "%s.tmp", path);
+  while (true) {
+    ThisThread::SleepMilliseconds(1000);
+    if (FILE* out = fopen(tmp, "w")) {
+      WriteTaintGuardCounts(out);
+      fclose(out);
+      rename(tmp, path);
+    }
   }
 }
 
 bool js::jit::TaintGuardCountsEnabled() {
   static const bool enabled = [] {
-    if (!getenv("FOXHOUND_TAINT_GUARD_COUNTS")) {
+    const char* value = getenv("FOXHOUND_TAINT_GUARD_COUNTS");
+    if (!value || !*value) {
       return false;
     }
-    atexit(DumpTaintGuardCounts);
+    if (strcmp(value, "1") == 0) {
+      atexit(DumpTaintGuardCounts);
+      return true;
+    }
+    Thread writer;
+    if (writer.init(WriteTaintGuardCountsLoop, value)) {
+      writer.detach();
+    }
     return true;
   }();
   return enabled;

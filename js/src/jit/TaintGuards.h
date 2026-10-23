@@ -36,9 +36,10 @@ enum class TaintGuard : uint8_t {
       Count
 };
 
-// Counting is enabled by setting FOXHOUND_TAINT_GUARD_COUNTS in the
-// environment. The counts are written to stderr when the process exits.
-// Without it the emitted code is a single branch.
+// Counting is enabled by FOXHOUND_TAINT_GUARD_COUNTS in the environment. With
+// "1" the counts go to stderr when the process exits. Any other value names a
+// directory that gets a taint-guards.<pid> file per process, rewritten once a
+// second. Without it the emitted code is a single branch.
 bool TaintGuardCountsEnabled();
 
 // Jump to |label| when |str| is tainted.

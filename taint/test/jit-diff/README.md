@@ -51,5 +51,9 @@ how often it fires, and the counts go to stderr at exit:
 [taint-guard] pid=2399255 Concat 10000
 ```
 
+In the browser, content processes end with an immediate exit that skips the
+dump. Set the variable to a directory instead: each process then rewrites
+`<dir>/taint-guards.<pid>` once a second.
+
 The setting is read when code is generated. Without it the checks are the same
 single branch as before.
