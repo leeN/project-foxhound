@@ -19,6 +19,7 @@
 #include "jit/RegExpStubConstants.h"
 #include "jit/SharedICHelpers.h"
 #include "jit/StubFolding.h"
+#include "jit/TaintGuards.h"
 #include "jit/VMFunctions.h"
 #include "js/experimental/JitInfo.h"  // JSJitInfo
 #include "js/friend/DOMProxy.h"       // JS::ExpandoAndGeneration
@@ -1153,10 +1154,8 @@ bool BaselineCacheIRCompiler::emitLoadStringCharResult(
   }
 
   // Foxhound: also check whether the string is tainted
-  masm.branchPtr(Assembler::NotEqual,
-                 Address(str, JSString::offsetOfTaint()),
-                 ImmPtr(nullptr),
-                 failure->label());
+  BranchIfStringTainted(masm, str, failure->label(),
+                        TaintGuard::ICLoadStringChar);
 
   // Bounds check, load string char.
   Label done;

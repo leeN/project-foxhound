@@ -52,6 +52,7 @@
 #include "jit/SafepointIndex.h"
 #include "jit/SharedICHelpers.h"
 #include "jit/SharedICRegisters.h"
+#include "jit/TaintGuards.h"
 #include "jit/VMFunctions.h"
 #include "jit/WarpSnapshot.h"
 #include "js/ColumnNumber.h"  // JS::LimitedColumnNumberOneOrigin
@@ -2740,10 +2741,7 @@ void CreateDependentString::generate(MacroAssembler& masm,
   masm.bind(&nonEmpty);
 
   // Foxhound: if we detect a tainted string argument we bail out to the interpreter.
-  masm.branchPtr(Assembler::NotEqual,
-                 Address(base, JSString::offsetOfTaint()),
-                 ImmPtr(nullptr),
-                 failure_);
+  BranchIfStringTainted(masm, base, failure_, TaintGuard::RegExpMatchSubstring);
 
   // Complete matches use the base string.
   Label nonBaseStringMatch;
@@ -13858,10 +13856,7 @@ void CodeGenerator::visitSubstr(LSubstr* lir) {
   masm.bind(&nonZero);
 
   // Foxhound: if we detect a tainted string argument we bail out to the interpreter.
-  masm.branchPtr(Assembler::NotEqual,
-                 Address(string, JSString::offsetOfTaint()),
-                 ImmPtr(nullptr),
-                 slowPath);
+  BranchIfStringTainted(masm, string, slowPath, TaintGuard::Substr);
   
   masm.branch32(Assembler::NotEqual,
                 Address(string, JSString::offsetOfLength()), length, &nonInput);
@@ -14093,7 +14088,7 @@ JitCode* JitZone::generateStringConcatStub(JSContext* cx) {
   masm.loadPtr(Address(lhs, JSString::offsetOfTaint()), temp1);
   masm.loadPtr(Address(rhs, JSString::offsetOfTaint()), temp3);
   masm.orPtr(temp3, temp1);
-  masm.branchTestPtr(Assembler::NonZero, temp1, temp1, &failure);
+  BranchIfTaintNonNull(masm, temp1, &failure, TaintGuard::Concat);
   
   // Check if we can use a JSInlineString. The result is a Latin1 string if
   // lhs and rhs are both Latin1, so we AND the flags.
@@ -14287,10 +14282,7 @@ void CodeGenerator::visitLinearizeString(LLinearizeString* lir) {
       lir, ArgList(str), StoreRegisterTo(output));
 
   // Foxhound: if we detect a tainted string argument we bail out to the interpreter.
-  masm.branchPtr(Assembler::NotEqual,
-                 Address(str, JSString::offsetOfTaint()),
-                 ImmPtr(nullptr),
-                 ool->entry());
+  BranchIfStringTainted(masm, str, ool->entry(), TaintGuard::LinearizeString);
 
   masm.branchIfRope(str, ool->entry());
 
@@ -14355,10 +14347,7 @@ void CodeGenerator::visitCharCodeAt(LCharCodeAt* lir) {
     auto* ool = oolCallVM<Fn, jit::CharCodeAt>(lir, ArgList(str, Imm32(0)),
                                                StoreRegisterTo(output));
     // Foxhound: if we detect a tainted string argument we bail out to the interpreter.
-    masm.branchPtr(Assembler::NotEqual,
-                  Address(str, JSString::offsetOfTaint()),
-                  ImmPtr(nullptr),
-                  ool->entry());
+    BranchIfStringTainted(masm, str, ool->entry(), TaintGuard::CharCodeAt);
 
     masm.loadStringChar(str, 0, output, temp0, temp1, ool->entry());
     masm.bind(ool->rejoin());
@@ -14368,10 +14357,7 @@ void CodeGenerator::visitCharCodeAt(LCharCodeAt* lir) {
     auto* ool = oolCallVM<Fn, jit::CharCodeAt>(lir, ArgList(str, index),
                                                StoreRegisterTo(output));
     // Foxhound: if we detect a tainted string argument we bail out to the interpreter.
-    masm.branchPtr(Assembler::NotEqual,
-                  Address(str, JSString::offsetOfTaint()),
-                  ImmPtr(nullptr),
-                  ool->entry());
+    BranchIfStringTainted(masm, str, ool->entry(), TaintGuard::CharCodeAt);
 
     masm.loadStringChar(str, index, output, temp0, temp1, ool->entry());
     masm.bind(ool->rejoin());
@@ -15033,10 +15019,7 @@ void CodeGenerator::visitStringToLowerCase(LStringToLowerCase* lir) {
   masm.branch32(Assembler::NotEqual, flags, linearLatin1Bits, ool->entry());
 
   // Foxhound: if we detect a tainted string argument we bail out to the interpreter.
-  masm.branchPtr(Assembler::NotEqual,
-                 Address(string, JSString::offsetOfTaint()),
-                 ImmPtr(nullptr),
-                 ool->entry());
+  BranchIfStringTainted(masm, string, ool->entry(), TaintGuard::ToLowerCase);
 
   Register length = temp0;
   masm.loadStringLength(string, length);
@@ -17924,9 +17907,8 @@ void CodeGenerator::emitMaybeAtomizeSlot(LInstruction* ins, Register stringReg,
 
   // Foxhound: leave tainted strings alone, the atom stored back into the slot
   // would drop the taint.
-  masm.branchPtr(Assembler::NotEqual,
-                 Address(stringReg, JSString::offsetOfTaint()),
-                 ImmPtr(nullptr), ool->rejoin());
+  BranchIfStringTainted(masm, stringReg, ool->rejoin(),
+                        TaintGuard::AtomizeSlot);
 
   masm.branchTest32(Assembler::Zero,
                     Address(stringReg, JSString::offsetOfFlags()),

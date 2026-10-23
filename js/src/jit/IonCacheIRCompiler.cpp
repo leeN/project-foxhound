@@ -17,6 +17,7 @@
 #include "jit/JSJitFrameIter.h"
 #include "jit/Linker.h"
 #include "jit/SharedICHelpers.h"
+#include "jit/TaintGuards.h"
 #include "jit/VMFunctions.h"
 #include "proxy/DeadObjectProxy.h"
 #include "proxy/Proxy.h"
@@ -1593,10 +1594,8 @@ bool IonCacheIRCompiler::emitLoadStringCharResult(
   }
 
   // Foxhound: also check whether the string is tainted
-  masm.branchPtr(Assembler::NotEqual,
-                 Address(str, JSString::offsetOfTaint()),
-                 ImmPtr(nullptr),
-                 failure->label());
+  BranchIfStringTainted(masm, str, failure->label(),
+                        TaintGuard::ICLoadStringChar);
 
   // Bounds check, load string char.
   Label done;

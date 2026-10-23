@@ -22,7 +22,8 @@ python3 taint/test/jit-diff/run.py --js obj-tf-release/dist/bin/js --out artifac
   Script hashes, file paths and columns are left out.
 - `run.py` runs the driver under each configuration (`interp`, `blinterp`,
   `baseline`, `ion-eager`, `default`, `fast-warmup`), sharded over all cores,
-  and compares each one against `interp`.
+  and compares each one against `interp`. Ion compiles on the main thread in
+  every configuration, so a rerun gives the same results.
 
 Mismatch categories:
 
@@ -38,3 +39,17 @@ Mismatch categories:
 Useful options: `--filter REGEXP` over `case/input/pattern` ids, `--configs`,
 `--extra` for flags added to every configuration (e.g. `--gc-zeal=...` on a
 gczeal build), and `--scale` to shorten the hot loops.
+
+## Counting taint guard hits
+
+Every JIT fast path that reads or builds string contents sends tainted strings
+to a slow path (`js/src/jit/TaintGuards.h`). With
+`FOXHOUND_TAINT_GUARD_COUNTS=1` in the environment, each of those checks counts
+how often it fires, and the counts go to stderr at exit:
+
+```
+[taint-guard] pid=2399255 Concat 10000
+```
+
+The setting is read when code is generated. Without it the checks are the same
+single branch as before.

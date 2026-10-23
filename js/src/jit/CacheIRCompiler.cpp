@@ -25,6 +25,7 @@
 #include "jit/JitZone.h"
 #include "jit/SharedICHelpers.h"
 #include "jit/SharedICRegisters.h"
+#include "jit/TaintGuards.h"
 #include "jit/VMFunctions.h"
 #include "js/friend/DOMProxy.h"     // JS::ExpandoAndGeneration
 #include "js/friend/XrayJitInfo.h"  // js::jit::GetXrayJitInfo
@@ -4852,10 +4853,8 @@ bool CacheIRCompiler::emitLoadStringCharCodeResult(StringOperandId strId,
     return false;
   }
   // Foxhound: bail out if thisv is tainted.
-  masm.branchPtr(Assembler::NotEqual,
-                 Address(str, JSString::offsetOfTaint()),
-                 ImmPtr(nullptr),
-                 failure->label());
+  BranchIfStringTainted(masm, str, failure->label(),
+                        TaintGuard::ICLoadStringCharCode);
 
   // Bounds check, load string char.
   Label done;
