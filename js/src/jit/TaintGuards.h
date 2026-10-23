@@ -24,7 +24,6 @@ class MacroAssembler;
   _(RegExpMatchSubstring)       \
   _(Substr)                     \
   _(Concat)                     \
-  _(LinearizeString)            \
   _(ToLowerCase)                \
   _(AtomizeSlot)                \
   _(GuardStringUntainted)

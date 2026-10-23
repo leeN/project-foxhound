@@ -14289,9 +14289,6 @@ void CodeGenerator::visitLinearizeString(LLinearizeString* lir) {
   auto* ool = oolCallVM<Fn, jit::LinearizeForCharAccess>(
       lir, ArgList(str), StoreRegisterTo(output));
 
-  // Foxhound: if we detect a tainted string argument we bail out to the interpreter.
-  BranchIfStringTainted(masm, str, ool->entry(), TaintGuard::LinearizeString);
-
   masm.branchIfRope(str, ool->entry());
 
   if (str != output) {
