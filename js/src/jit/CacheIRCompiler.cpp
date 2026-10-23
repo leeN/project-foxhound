@@ -4861,18 +4861,15 @@ bool CacheIRCompiler::emitLoadStringCharCodeResult(StringOperandId strId,
   AutoScratchRegisterMaybeOutput scratch1(allocator, masm, output);
   AutoScratchRegisterMaybeOutputType scratch2(allocator, masm, output);
   AutoScratchRegister scratch3(allocator, masm);
-  
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-  // Foxhound: bail out if thisv is tainted.
-  BranchIfStringTainted(masm, str, failure->label(),
-                        TaintGuard::ICLoadStringCharCode);
 
   // Bounds check, load string char.
   Label done;
   if (!handleOOB) {
+    FailurePath* failure;
+    if (!addFailurePath(&failure)) {
+      return false;
+    }
+
     masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
                               scratch1, failure->label());
     masm.loadStringChar(str, index, scratch1, scratch2, scratch3,

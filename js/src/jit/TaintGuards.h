@@ -21,12 +21,10 @@ class MacroAssembler;
 // tainted strings to a slow path. Each such check is one of these.
 #define FOR_EACH_TAINT_GUARD(_) \
   _(ICGuardStringUntainted)     \
-  _(ICLoadStringCharCode)       \
   _(RegExpMatchSubstring)       \
   _(Substr)                     \
   _(Concat)                     \
   _(LinearizeString)            \
-  _(CharCodeAt)                 \
   _(ToLowerCase)                \
   _(AtomizeSlot)                \
   _(GuardStringUntainted)

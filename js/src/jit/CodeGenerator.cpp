@@ -14354,9 +14354,6 @@ void CodeGenerator::visitCharCodeAt(LCharCodeAt* lir) {
   if (lir->index()->isBogus()) {
     auto* ool = oolCallVM<Fn, jit::CharCodeAt>(lir, ArgList(str, Imm32(0)),
                                                StoreRegisterTo(output));
-    // Foxhound: if we detect a tainted string argument we bail out to the interpreter.
-    BranchIfStringTainted(masm, str, ool->entry(), TaintGuard::CharCodeAt);
-
     masm.loadStringChar(str, 0, output, temp0, temp1, ool->entry());
     masm.bind(ool->rejoin());
   } else {
@@ -14364,9 +14361,6 @@ void CodeGenerator::visitCharCodeAt(LCharCodeAt* lir) {
 
     auto* ool = oolCallVM<Fn, jit::CharCodeAt>(lir, ArgList(str, index),
                                                StoreRegisterTo(output));
-    // Foxhound: if we detect a tainted string argument we bail out to the interpreter.
-    BranchIfStringTainted(masm, str, ool->entry(), TaintGuard::CharCodeAt);
-
     masm.loadStringChar(str, index, output, temp0, temp1, ool->entry());
     masm.bind(ool->rejoin());
   }
