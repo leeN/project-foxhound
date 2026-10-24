@@ -390,6 +390,18 @@ void JS::MarkTaintedFunctionArguments(JSContext* cx, JSFunction* function,
                                       const CallArgs& args) {
   if (!function) return;
 
+  // Foxhound: this runs on every interpreted call. Computing the location
+  // walks the script's source notes, so bail out before that when no
+  // argument is tainted.
+  bool anyTainted = false;
+  for (unsigned i = 0; i < args.length(); i++) {
+    if (args[i].isString() && args[i].toString()->isTainted()) {
+      anyTainted = true;
+      break;
+    }
+  }
+  if (!anyTainted) return;
+
   RootedValue name(cx);
 
   JS::Rooted<JSAtom*> atom(cx);
